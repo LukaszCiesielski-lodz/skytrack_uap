@@ -1,5 +1,13 @@
 # skyhunt
 
+## Od autora
+
+Ten kod piszę dla wszystkich obserwatorów nieba, nie tylko dla siebie. Nagrywam niebo zwykłym aparatem z jasnym obiektywem i chcę wiedzieć, co naprawdę przeleciało przez kadr: który to satelita (z numerem NORAD), co jest meteorem, co samolotem, a co zostaje niewyjaśnione. Wszystko ma być policzone i sprawdzalne, bez zgadywania. Jeśli masz aparat, statyw i trochę cierpliwości, możesz robić to samo.
+
+Kod jest otwarty (licencja MIT): używaj go, zmieniaj, rozwijaj. **Mam jedną prośbę: jeśli korzystasz z tego projektu w swoich obserwacjach, publikacjach, filmach czy we własnym kodzie, wspomnij o nim** i podaj link do repozytorium: <https://github.com/LukaszCiesielski-lodz/skytrack_uap>. Chętnie też zobaczę Twoje wyniki. Zgłoszenia błędów, pomysły i poprawki (issues, pull requesty) są mile widziane.
+
+## Co to robi
+
 Pipeline do wykrywania **wszystkich** obiektów ruchomych na wideo nieba 4K, także tych na granicy szumu. Każdy obiekt jest mierzony, a potem, jeśli się da, wyjaśniany: satelita (TLE, NORAD ID), meteor, samolot albo bliski obiekt (ptak, nietoperz, owad). Jako anomalię oznaczamy tylko to, co zostaje po odrzuceniu znanych klas, i to według kryteriów zamrożonych przed analizą.
 
 Pełna specyfikacja: [docs/HANDOFF_skyhunt.md](docs/HANDOFF_skyhunt.md). Baseline CPU (tylko referencja wyników): [baseline/skytracks.py](baseline/skytracks.py).
@@ -8,11 +16,25 @@ Pełna specyfikacja: [docs/HANDOFF_skyhunt.md](docs/HANDOFF_skyhunt.md). Baselin
 
 | Kamień | Zakres | Stan |
 |---|---|---|
-| M0 | repo, config, notebook Colab, dekodowanie GPU z pomiarem, manifest i wznawianie | kod gotowy, czeka na pierwsze uruchomienie na Colab |
-| Raport | detektor per klatka, tory, plate solve, synchronizacja czasu po satelitach, NORAD, PDF z konstelacjami i wycinkami | kod gotowy, czeka na pierwsze uruchomienie na Colab |
+| M0 | repo, config, notebook Colab, dekodowanie GPU z pomiarem, manifest i wznawianie | działa na Colab (L4) |
+| Raport | detektor per klatka, tory, plate solve, synchronizacja czasu po satelitach, NORAD, PDF z konstelacjami i wycinkami | działa; pierwsze wyniki niżej |
 | M3 | shift-and-stack na GPU (słabe obiekty), FAR z tasowania, injection–recovery | – |
 | M4 | tory nieliniowe, odległość z rozmycia, klasy biologiczne, meteory, samoloty (ADS-B) | – |
 | M5 | scoring anomalii | – |
+
+### Pierwsze wyniki: `DSCF4641.MOV` (27.09.2026, Łabędź w zenicie, 320 s)
+
+| | |
+|---|---|
+| Plate solve | 5/5 epok; pole 25,8° × 14,7°, 24,7″/px, bez cropu 4K; zgodność epok 0,44 px |
+| Detekcja | 4,04 mln detekcji, 359 torów; NVDEC ~150 kl/s (stack), ~50–60 kl/s (detekcja) |
+| Poprawka zegara | Δ = +26,85 ± 0,14 s, zgodna dla 24 torów satelitów (zegar aparatu spieszył się o 9 min 33 s) |
+| Katalog | 31 354 obiekty (CelesTrak + Space-Track) |
+| Zidentyfikowane | 36 torów, m.in. Starlink, Kuiper, Hulianwang, Globalstar; najjaśniejszy obiekt nagrania to STARLINK-2112 (NORAD 47391) |
+| Położenie z paralaksy satelitów | 0,24 km od wpisanych współrzędnych |
+| Nagranie ciemne | ~112 fałszywych torów na godzinę, 6 gorących pikseli |
+
+Lekcja z tego nagrania: pierwszy przebieg dał 0 identyfikacji, bo w configu było miejsce oddalone o ~2,2 km od faktycznego. Satelity na ~500 km były przez to przesunięte o ~0,25° (paralaksa). Dlatego współrzędne wpisuje się teraz osobno dla każdego nagrania, a pipeline sam sprawdza je z paralaksy.
 
 ## Raport
 
@@ -41,8 +63,8 @@ Dane konstelacji i nazw gwiazd: [d3-celestial](https://github.com/ofrohn/d3-cele
 |---|---|
 | Aparat | Fujifilm X-E3, Fujinon XF 50mm F1.0; ostrość ręcznie, tuż przed ∞ |
 | Wideo | 3840×2160, 24000/1001 fps, H.264 w MOV, GOP 24 klatki (1 s), **bez klatek B**, migawka 1/24 s |
-| Miejsce | 51.718042 N, 19.582748 E, 210 m n.p.m. (Łódź) |
-| `DSCF4641.MOV` | 320 s, start ok. 2026-09-27 18:26 UTC (zegar aparatu spieszył się o 10 min); najjaśniejsza gwiazda: Deneb |
+| Miejsce | **osobno dla każdego nagrania**: komórka „Miejsce obserwacji” w notebooku zapisuje je do `MyDrive/skyhunt/sites.yaml` (poza repo). Sekcja `site` w `config.yaml` to tylko wartość domyślna (Łódź). Błąd ~2 km psuje identyfikację satelitów; pipeline ostrzega, gdy paralaksa wskazuje przesunięcie > 0,3 km |
+| `DSCF4641.MOV` | 320 s, start 2026-09-27 18:26:35 UTC (po synchronizacji; zegar aparatu spieszył się o 9 min 33 s); najjaśniejsza gwiazda: Deneb |
 | `dark_frames.MOV` | 320 s, zakryty obiektyw, 2026-09-28 (po korekcie zegara); do FAR i mapy hot pikseli |
 
 Czas z metadanych jest tylko punktem startowym (±60 s). Ostateczną poprawkę zegara daje dopasowanie przelotów satelitów (M2). Data EXIF Fuji w `udta` to start nagrania; `mvhd.creation_time` wypada ~24 s po jego końcu (sprawdzone na obu plikach).
@@ -50,6 +72,13 @@ Czas z metadanych jest tylko punktem startowym (±60 s). Ostateczną poprawkę z
 ## Uruchomienie (Colab)
 
 Otwórz [colab/run_skyhunt.ipynb](colab/run_skyhunt.ipynb) w Colab (GPU A100 lub L4) i uruchom komórki od góry. Nagrania trzymaj w `MyDrive/skyhunt/raw/`, wyniki trafiają do `MyDrive/skyhunt/out/<nazwa_pliku>/`.
+
+Przy każdej nowej obserwacji:
+1. Wpisz jej współrzędne w komórce „Miejsce obserwacji”.
+2. Krótko po nagraniu uruchom komórkę „Snapshot elementów orbit” (CelesTrak ma tylko bieżące elementy).
+3. Opcjonalnie dodaj login Space-Track w Colab Secrets (`SPACETRACK_USER`, `SPACETRACK_PASSWORD`).
+
+Nie zapisuj notebooka z wpisanymi współrzędnymi z powrotem do publicznego repo.
 
 CLI:
 
@@ -87,7 +116,7 @@ Parytet backendów sprawdzają testy (`tests/test_decode.py`): na prawdziwym nag
 
 ### Przepustowość
 
-Do uzupełnienia po pierwszym uruchomieniu na Colab (`skyhunt bench-decode`, wynik w `out/_bench/decode_bench.md`).
+Colab, GPU L4, 4K H.264: `nvcodec` ok. 150–165 kl/s w etapie `stack`; detekcja z tłem, filtrem i etykietowaniem na GPU ok. 50–65 kl/s (320 s nagrania w ~2,5 min). Szczegóły: `skyhunt bench-decode`, wynik w `out/_bench/decode_bench.md`.
 
 ## Wyniki etapów M0
 
