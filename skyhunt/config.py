@@ -34,7 +34,14 @@ def load_config(path: str | Path | None = None, overrides: dict | None = None,
     if sites and Path(sites).is_file():
         with open(sites, encoding="utf-8") as fh:
             per_site = yaml.safe_load(fh) or {}
-        cfg = deep_merge(cfg, {"files": {str(f): {"site": s} for f, s in per_site.items()}})
+        files: dict = {}
+        for f, s in per_site.items():
+            s = dict(s or {})
+            over = {"role": s.pop("role")} if "role" in s else {}
+            if s:
+                over["site"] = s
+            files[str(f)] = over
+        cfg = deep_merge(cfg, {"files": files})
         cfg["_sites"] = str(sites)
     if overrides:
         cfg = deep_merge(cfg, overrides)
@@ -56,7 +63,12 @@ def deep_merge(base: dict, extra: dict) -> dict:
 def config_for_file(cfg: dict, video_path: str | Path) -> dict:
     """Config z nałożonymi nadpisaniami z sekcji ``files`` dla danej nazwy pliku
     (np. inna poprawka zegara aparatu dla starszego nagrania)."""
-    per_file = (cfg.get("files") or {}).get(Path(video_path).name)
+    name = Path(video_path).name
+    per_file = dict((cfg.get("files") or {}).get(name) or {})
+    if "role" not in per_file and "dark" in name.lower():   # np. dark_0929.MOV: zakryty obiektyw
+        per_file["role"] = "dark"
+    if per_file.get("role") == "dark" and cfg.get("dark_overrides"):
+        per_file = deep_merge(cfg["dark_overrides"], per_file)   # wspólne ustawienia nagrań ciemnych
     return deep_merge(cfg, per_file) if per_file else cfg
 
 

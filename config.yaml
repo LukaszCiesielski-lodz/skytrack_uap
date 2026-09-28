@@ -216,7 +216,17 @@ stack:
 bench:
   frames: 480              # 20 s nagrania
 
-# Nadpisania per plik (klucz = nazwa pliku); nakładane na całą konfigurację.
+# Wspólne ustawienia nagrań z zakrytym obiektywem (role: dark — z sekcji files, z komórki
+# „Nagrania” w notebooku albo z nazwy pliku zawierającej „dark”).
+dark_overrides:
+  detect:
+    # H.264 kwantuje czerń do stałej (MAD = 0), więc przy podłodze 0.5 DN każdy blok 8×8
+    # o +1 DN był detekcją (79% klatek oflagowanych). Podłoga ≈ σ nieba z DSCF4641 daje
+    # FAR przy tym samym progu w DN co na niebie.
+    sigma_floor_dn: 1.5
+
+# Nadpisania per plik (klucz = nazwa pliku); nakładane na całą konfigurację. Miejsce obserwacji
+# i role nowych nagrań wpisuje się w notebooku (MyDrive/skyhunt/sites.yaml), nie tutaj.
 files:
   DSCF4641.MOV:
     time:
@@ -225,8 +235,3 @@ files:
       hint_star: Deneb
   dark_frames.MOV:
     role: dark                    # zakryty obiektyw: do FAR i mapy hot pikseli
-    detect:
-      # H.264 kwantuje czerń do stałej (MAD = 0), więc przy podłodze 0.5 DN każdy blok 8×8
-      # o +1 DN był detekcją (79% klatek oflagowanych). Podłoga ≈ σ nieba z DSCF4641 daje
-      # FAR przy tym samym progu w DN co na niebie.
-      sigma_floor_dn: 1.5

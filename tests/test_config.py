@@ -49,6 +49,21 @@ def test_sites_file_overrides_site_per_file(tmp_path):
         load_config(PACKAGE_CONFIG, sites=sites)
 
 
+def test_dark_role_from_sites_file_or_name(tmp_path):
+    from skyhunt.config import PACKAGE_CONFIG, load_config
+
+    sites = tmp_path / "sites.yaml"
+    sites.write_text("DSCF0100.MOV: {role: dark}\n", encoding="utf-8")
+    cfg = load_config(PACKAGE_CONFIG, sites=sites)
+    assert config_for_file(cfg, "/raw/DSCF0100.MOV")["role"] == "dark"
+    assert "site" not in (cfg["files"]["DSCF0100.MOV"])
+    assert config_for_file(cfg, "/raw/Dark_0929.MOV")["role"] == "dark"      # z nazwy pliku
+    for name in ("DSCF0100.MOV", "Dark_0929.MOV", "dark_frames.MOV"):        # wspólne ustawienia ciemnych
+        assert config_for_file(cfg, f"/raw/{name}")["detect"]["sigma_floor_dn"] == 1.5
+    assert config_for_file(cfg, "/raw/DSCF0101.MOV")["detect"]["sigma_floor_dn"] == 0.5
+    assert config_for_file(cfg, "/raw/DSCF0101.MOV").get("role", "sky") == "sky"
+
+
 def test_parse_set():
     o = parse_set(["decode.batch_frames=16", "decode.backends=[pyav]", "time.camera_tz=UTC"])
     assert o == {"decode": {"batch_frames": 16, "backends": ["pyav"]}, "time": {"camera_tz": "UTC"}}
