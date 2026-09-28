@@ -148,8 +148,9 @@ def _fmt_metric(v) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
-                        format="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S")
+    # Biblioteki tylko od WARNING (fontTools przy zapisie PDF loguje tysiące linii INFO).
+    logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S")
+    log.setLevel(logging.DEBUG if args.verbose else logging.INFO)
     cfg = load_config(args.config, parse_set(args.set))
     log.debug("config: %s", cfg["_source"])
     handler = {"probe": cmd_probe, "bench-decode": cmd_bench, "run": cmd_run, "status": cmd_status}[args.cmd]
