@@ -291,8 +291,8 @@ def identify(ctx: StageContext) -> dict:
     import pandas as pd
 
     from .astrometry import load_wcs
-    from .satellites import (SIDEREAL_DEG_S, Observer, identify_tracks, load_catalog, make_track_sky, screen,
-                             sunlit_flags, synchronize)
+    from .satellites import (SIDEREAL_DEG_S, Observer, identify_tracks, load_catalog, make_track_sky,
+                             observer_offset, screen, sunlit_flags, synchronize)
     from .sky import FixedCamera, field_center, radec_to_vec
     from .timing import FrameClock
     from .tracks import classify_hint
@@ -342,6 +342,18 @@ def identify(ctx: StageContext) -> dict:
     delta = sync.delta_s
     ctx.log.info("[%s] poprawka zegara Δ = %+.2f ± %.2f s (%s, %s)", ctx.video_path.name, delta, sync.sigma_s,
                  sync.confidence, sync.method)
+    offset = None
+    try:
+        offset = observer_offset(observer, catalog, sync.members, by_id) if sync.synced else None
+    except Exception as e:  # noqa: BLE001 — diagnostyka nie może zatrzymać identyfikacji
+        ctx.log.warning("[%s] przesunięcie obserwatora: %s", ctx.video_path.name, e)
+    if offset:
+        bad = offset["horizontal_km"] > float(icfg["site_warn_km"])
+        (ctx.log.warning if bad else ctx.log.info)(
+            "[%s] paralaksa satelitów: obserwator przesunięty o %.2f km na północ, %.2f km na wschód "
+            "(%d torów, odchylenie %.0f″ → %.0f″ po korekcie)%s", ctx.video_path.name, offset["north_km"],
+            offset["east_km"], offset["n_tracks"], offset["rms_before_arcsec"], offset["rms_after_arcsec"],
+            " — SPRAWDŹ WSPÓŁRZĘDNE (komórka „Miejsce obserwacji”)" if bad else "")
     matches = identify_tracks(observer, catalog, skies, grid, delta, icfg) if grid is not None else {}
     bests = [m[0] for m in matches.values() if m]
     for m in bests:   # predykcja toru satelity do rysowania
@@ -366,12 +378,13 @@ def identify(ctx: StageContext) -> dict:
         az, alt = cam_sync.altaz(p["x"].to_numpy()[[0, -1]], p["y"].to_numpy()[[0, -1]])
         omega = s.gc.omega_deg_s
         curv_px = float(t["curv_px"])
+        peak = float(p["peak_snr"].median()) if "peak_snr" in p else float("nan")
         hint, reason = classify_hint(omega, float(t["dur_s"]), curv_px, float(t["cross_ratio"]), float(t["f_peak_hz"]),
-                                     float(t["f_power"]), meta.fps, ccfg)
+                                     float(t["f_power"]), meta.fps, ccfg, peak_snr=peak)
         best = (matches.get(tid) or [None])[0]
         kind = "sat" if best is not None and CONF_RANK.get(best.confidence, 0) >= min_rank else "unid"
         rows.append({
-            **t.to_dict(), "kind": kind, "class_hint": hint, "class_reason": reason,
+            **t.to_dict(), "kind": kind, "class_hint": hint, "class_reason": reason, "peak_snr_median": peak,
             "tau0": float(s.tau[0]), "tau1": float(s.tau[-1]), "tau_mid": s.tau_mid,
             "utc_start": (t0 + timedelta(seconds=float(s.tau[0]) + delta)).isoformat(),
             "utc_end": (t0 + timedelta(seconds=float(s.tau[-1]) + delta)).isoformat(),
@@ -426,13 +439,15 @@ def identify(ctx: StageContext) -> dict:
             + ("" if gp["spacetrack"] else "; bez Space-Track: niepełne człony rakiet i śmieci"))
     ctx.write_json("time_sync.json", {**sync.to_dict(), "start_utc_prior": t0.isoformat(),
                                       "start_utc_synced": (t0 + timedelta(seconds=delta)).isoformat(),
-                                      "catalog_note": note})
+                                      "catalog_note": note, "observer_offset": offset,
+                                      "site": dict(zip(("lat_deg", "lon_deg", "elevation_m"), site))})
     n_sat = int((final["kind"] == "sat").sum()) if len(final) else 0
     ctx.log.info("[%s] zidentyfikowane satelity: %d / %d torów; przewidziane w kadrze: %d", ctx.video_path.name,
                  n_sat, len(final), len(pred_rows))
     return {"outputs": ["tracks_final.parquet", "tracks_final.csv", "track_sky.parquet", "identifications.json",
                         "fov_predicted.csv", "time_sync.json"],
-            "metrics": {"delta_s": delta, "sigma_s": sync.sigma_s, "sync_confidence": sync.confidence,
+            "metrics": {"site_offset_km": offset["horizontal_km"] if offset else None,
+                        "delta_s": delta, "sigma_s": sync.sigma_s, "sync_confidence": sync.confidence,
                         "synced": sync.synced, "tracks": len(final), "satellites": n_sat,
                         "predicted_in_fov": len(pred_rows)}}
 

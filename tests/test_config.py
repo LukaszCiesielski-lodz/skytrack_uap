@@ -34,6 +34,21 @@ def test_per_file_overrides(cfg):
     assert config_hash(old, ["time"]) != config_hash(new, ["time"])
 
 
+def test_sites_file_overrides_site_per_file(tmp_path):
+    from skyhunt.config import PACKAGE_CONFIG, load_config
+
+    sites = tmp_path / "sites.yaml"
+    sites.write_text("DSCF0001.MOV: {lat_deg: 50.5, lon_deg: 20.25, elevation_m: 300}\n", encoding="utf-8")
+    cfg = load_config(PACKAGE_CONFIG, sites=sites)
+    a = config_for_file(cfg, "/raw/DSCF0001.MOV")
+    assert (a["site"]["lat_deg"], a["site"]["lon_deg"], a["site"]["elevation_m"]) == (50.5, 20.25, 300)
+    assert config_for_file(cfg, "/raw/DSCF0002.MOV")["site"] == cfg["site"]
+    assert config_for_file(cfg, "/raw/DSCF4641.MOV")["time"]["camera_clock_ahead_s"] == 600  # repo nadal działa
+    sites.write_text("DSCF0001.MOV: {lat_deg: 99, lon_deg: 20}\n", encoding="utf-8")
+    with pytest.raises(ValueError):
+        load_config(PACKAGE_CONFIG, sites=sites)
+
+
 def test_parse_set():
     o = parse_set(["decode.batch_frames=16", "decode.backends=[pyav]", "time.camera_tz=UTC"])
     assert o == {"decode": {"batch_frames": 16, "backends": ["pyav"]}, "time": {"camera_tz": "UTC"}}

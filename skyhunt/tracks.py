@@ -228,11 +228,13 @@ def measure_track(frames, x, y, flux, cxx, cxy, cyy, *, fps: float, width: int, 
 
 
 def classify_hint(deg_s: float, dur_s: float, curv_px: float, cross_ratio: float, f_peak_hz: float,
-                  f_power: float, fps: float, ccfg: dict) -> tuple[str, str]:
-    """Podpowiedź klasy dla toru bez dopasowania do katalogu: (klasa, uzasadnienie)."""
+                  f_power: float, fps: float, ccfg: dict, peak_snr: float = float("nan")) -> tuple[str, str]:
+    """Podpowiedź klasy dla toru bez dopasowania do katalogu: (klasa, uzasadnienie).
+    Szerokość nie świadczy o nieostrości, gdy obiekt jest jasny (prześwietlenie rozlewa obraz)."""
     periodic = f_power > float(ccfg["periodic_min_power"])
     straight = curv_px < float(ccfg["straight_max_curv_px"])
-    near = math.isfinite(cross_ratio) and cross_ratio > float(ccfg["near_cross_ratio"])
+    bright = math.isfinite(peak_snr) and peak_snr >= float(ccfg.get("bright_peak_snr", math.inf))
+    near = math.isfinite(cross_ratio) and cross_ratio > float(ccfg["near_cross_ratio"]) and not bright
     a_lo, a_hi = ccfg["aircraft_f_hz"]
     s_lo, s_hi = ccfg["satellite_deg_s"]
     if deg_s > float(ccfg["meteor_min_deg_s"]) and dur_s < float(ccfg["meteor_max_dur_s"]) and straight:

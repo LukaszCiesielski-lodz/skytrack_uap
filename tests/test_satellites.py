@@ -113,6 +113,26 @@ def test_sync_and_identify_two_tracks(tmp_path, high_pass, cfg):
     assert ids[1][0].height_km == pytest.approx(420, abs=60)
 
 
+def test_observer_offset_from_parallax(tmp_path, high_pass):
+    """Tory nagrane ~2,2 km od współrzędnych w configu (jak DSCF4641): paralaksa odtwarza przesunięcie."""
+    from skyhunt.satellites import observer_offset
+
+    catalog = load_catalog([(write_csv(tmp_path / "gp.csv", omm_rows()), "test")], high_pass)
+    t0 = high_pass - timedelta(seconds=3)
+    obs_true = Observer(SITE[0] + 0.019, SITE[1] - 0.010, SITE[2], t0)   # ≈ 2,11 km N, 0,69 km W
+    observer = Observer(*SITE, t0)
+    members, skies = [], {}
+    for tid, norad, start in ((1, 25544, 0.0), (2, 90010, 1.0)):
+        i = int(np.flatnonzero(catalog.norad == norad)[0])
+        tau, u = synthetic_track(obs_true, catalog.satrecs[i], start, 5.0, tid, seed=tid)
+        skies[tid] = make_track_sky(tid, tau, u, np.zeros(len(tau)), np.zeros(len(tau)))
+        members.append({"track_id": tid, "cat_index": i, "delta_s": 0.0})
+    off = observer_offset(observer, catalog, members, skies)
+    assert off["north_km"] == pytest.approx(0.019 * 111.25, abs=0.25)
+    assert off["east_km"] == pytest.approx(-0.010 * 111.32 * np.cos(np.radians(SITE[0])), abs=0.25)
+    assert off["rms_after_arcsec"] < 0.2 * off["rms_before_arcsec"]
+
+
 def test_single_track_gives_low_confidence(tmp_path, high_pass, cfg):
     icfg = cfg["identify"]
     catalog, observer, tracks = build(tmp_path, high_pass, prior_error_s=-20.0)

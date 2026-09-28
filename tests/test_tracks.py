@@ -70,3 +70,6 @@ def test_classify_hint(cfg):
     assert classify_hint(0.5, 10.0, 0.5, 1.0, 1.0, 20, FPS, c)[0] == "samolot?"
     label, reason = classify_hint(4.4, 3.0, 26.0, 2.2, 5.2, 20, FPS, c)
     assert label == "bliski obiekt?" and "18.8" in reason and "nieostry" in reason
+    # tor #58 z DSCF4641 (STARLINK-2112): prosty, 0,77°/s, szeroki tylko przez prześwietlenie
+    assert classify_hint(0.77, 7.8, 0.5, 2.46, 5.0, 3, FPS, c)[0] == "bliski obiekt?"
+    assert classify_hint(0.77, 7.8, 0.5, 2.46, 5.0, 3, FPS, c, peak_snr=200.0)[0] == "satelita?"

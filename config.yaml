@@ -82,6 +82,7 @@ classify:
   meteor_max_dur_s: 2.0
   straight_max_curv_px: 4.0
   near_cross_ratio: 1.8      # szerokość poprzeczna ÷ gwiazda: nieostry, więc bliski
+  bright_peak_snr: 50        # jaśniejszy (mediana SNR maksimum) = prześwietlony: szerokość nie znaczy „bliski”
   periodic_min_power: 6
   aircraft_f_hz: [0.4, 2.0]
   satellite_deg_s: [0.05, 1.8]
@@ -146,6 +147,7 @@ identify:
   id_dir_tol_deg: 2
   ambiguity_ratio: 1.5
   sample_step_s: 1.0         # krok próbkowania satelity przy dopasowaniu przelotu
+  site_warn_km: 0.3          # paralaksa satelitów wskazuje przesunięcie obserwatora > tyle → ostrzeżenie
 
 report:
   identified_min_confidence: medium   # high | medium | low

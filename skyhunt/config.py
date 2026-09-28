@@ -22,10 +22,20 @@ def resolve_config_path(path: str | Path | None = None) -> Path:
     raise FileNotFoundError("nie znaleziono config.yaml (podaj --config)")
 
 
-def load_config(path: str | Path | None = None, overrides: dict | None = None) -> dict:
+def load_config(path: str | Path | None = None, overrides: dict | None = None,
+                sites: str | Path | None = None) -> dict:
+    """``sites``: plik YAML {nazwa pliku: {lat_deg, lon_deg, elevation_m}} z miejscem każdej
+    obserwacji (domyślnie ``$SKYHUNT_SITES``). Trzymany poza repo (Drive), nakładany jako
+    ``files.<plik>.site``; pliki bez wpisu używają sekcji ``site``."""
     p = resolve_config_path(path)
     with open(p, encoding="utf-8") as fh:
         cfg = yaml.safe_load(fh) or {}
+    sites = sites or os.environ.get("SKYHUNT_SITES")
+    if sites and Path(sites).is_file():
+        with open(sites, encoding="utf-8") as fh:
+            per_site = yaml.safe_load(fh) or {}
+        cfg = deep_merge(cfg, {"files": {str(f): {"site": s} for f, s in per_site.items()}})
+        cfg["_sites"] = str(sites)
     if overrides:
         cfg = deep_merge(cfg, overrides)
     validate(cfg)
@@ -153,5 +163,10 @@ def validate(cfg: dict) -> None:
                 resolve_star(str(over["astrometry"]["hint_star"]))
             except KeyError as e:
                 errors.append(f"files.{fname}.astrometry.hint_star: {e}")
+        site = over.get("site") if isinstance(over, dict) else None
+        if site is not None:
+            ok = isinstance(site, dict) and all(isinstance(site.get(k), (int, float)) for k in ("lat_deg", "lon_deg"))
+            if not ok or not -90 <= site["lat_deg"] <= 90 or not -180 <= site["lon_deg"] <= 180:
+                errors.append(f"files.{fname}.site: wymagane lat_deg ∈ [-90, 90] i lon_deg ∈ [-180, 180]")
     if errors:
         raise ValueError("Błędy w config.yaml:\n  - " + "\n  - ".join(errors))

@@ -1,5 +1,25 @@
 # CHANGELOG
 
+## Miejsce obserwacji per nagranie, paralaksa satelitów — 2026-09-28
+
+**Przyczyna 0 identyfikacji w DSCF4641 (359 torów):**
+- Nagranie było robione ~2,2 km od współrzędnych w `config.yaml`.
+- Synchronizacja czasu wyszła poprawnie: Δ = +26,8 s, 21 zgodnych torów, Space-Track.
+- Wszystkie tory miały jednak boczne odchylenie od orbit ∝ 1/odległość: 0,28° dla Starlinków (~480 km) i 0,06° dla Globalstara (~1740 km). Próg identyfikacji to 0,1°.
+- Przykład: tor #58 to STARLINK-2112 (NORAD 47391).
+  - zgodne: czas w kadrze, ω 0,771 vs 0,7709 °/s, kierunek 0,07°, 5″ wzdłuż toru;
+  - niezgodne: tylko odchylenie boczne 0,26°.
+
+**Zmiany:**
+- **Współrzędne dla każdego nagrania.** Nowa komórka „Miejsce obserwacji” w notebooku.
+  - Zapisuje je do `MyDrive/skyhunt/sites.yaml`, poza publicznym repo.
+  - `load_config` wczytuje ten plik z `$SKYHUNT_SITES` i nakłada jako `files.<plik>.site`, z walidacją.
+- **`identify` szacuje przesunięcie obserwatora z paralaksy torów synchronizacji.**
+  - Metoda najmniejszych kwadratów; wynik trafia do `time_sync.json` → `observer_offset`.
+  - Przy przesunięciu > `identify.site_warn_km` (0,3 km) pojawia się ostrzeżenie „sprawdź współrzędne”.
+- **Klasyfikacja:** jasne obiekty (mediana `peak_snr` ≥ `classify.bright_peak_snr`) nie dostają etykiety „bliski obiekt?” z powodu szerokości, bo tę daje prześwietlenie.
+- **Raport:** uwaga „bez Space-Track” pokazuje się tylko wtedy, gdy katalog faktycznie jest bez niego.
+
 ## Poprawki po pierwszym przebiegu na prawdziwych danych — 2026-09-28
 
 - **`detect`:** limit komponentów na klatkę liczony tylko dla komponentów z maksimum ≥ `snr_seed`.

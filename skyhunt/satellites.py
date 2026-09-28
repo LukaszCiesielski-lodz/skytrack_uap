@@ -464,6 +464,40 @@ class SyncResult:
         return asdict(self)
 
 
+def observer_offset(observer: Observer, catalog: Catalog, members: list, skies: dict) -> dict | None:
+    """Przesunięcie obserwatora [km] z paralaksy torów, które potwierdziły Δ: błędne
+    współrzędne dają boczne odchylenie ∝ 1/odległość satelity. Model liniowy:
+    u_zmierz − u_przew ≈ −(I − u uᵀ) d / r, rozwiązany metodą najmniejszych kwadratów."""
+    A, e = [], []
+    for m in members:
+        m = m if isinstance(m, dict) else m.to_dict()
+        s = skies.get(int(m["track_id"]))
+        if s is None:
+            continue
+        k = len(s.tau) // 2
+        topo = observer.topocentric([catalog.satrecs[int(m["cat_index"])]], [float(m["delta_s"]) + s.tau[k]])
+        u, dist = topo["unit"][0, 0], float(topo["dist_km"][0, 0])
+        if not np.isfinite(u).all():
+            continue
+        A.append(-(np.eye(3) - np.outer(u, u)) / dist)
+        e.append(s.vec[k] - u)
+    if len(A) < 3:
+        return None
+    A, e = np.vstack(A), np.concatenate(e)
+    d, *_ = np.linalg.lstsq(A, e, rcond=None)
+    up = observer.up_vectors([0.0])[0]
+    east = np.cross([0.0, 0.0, 1.0], up)
+    east /= np.linalg.norm(east)
+    north = np.cross(up, east)
+
+    def rms_arcsec(r):
+        return float(np.degrees(np.sqrt(np.mean(np.sum(r.reshape(-1, 3) ** 2, axis=1)))) * 3600)
+
+    n_km, e_km = float(d @ north), float(d @ east)
+    return {"north_km": n_km, "east_km": e_km, "up_km": float(d @ up), "horizontal_km": float(np.hypot(n_km, e_km)),
+            "rms_before_arcsec": rms_arcsec(e), "rms_after_arcsec": rms_arcsec(e - A @ d), "n_tracks": len(A) // 3}
+
+
 def is_sync_candidate(track: TrackSky, icfg: dict) -> bool:
     return (track.gc.cross_rms_arcsec <= float(icfg["cand_max_curv_arcsec"])
             and float(icfg["cand_min_deg_s"]) <= track.gc.omega_deg_s <= float(icfg["cand_max_deg_s"])
