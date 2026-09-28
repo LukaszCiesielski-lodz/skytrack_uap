@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "skyhunt"
+dynamic = ["version"]
+description = "Detekcja słabych i nietypowych obiektów ruchomych na wideo nieba"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+dependencies = [
+    "numpy>=1.24",
+    "pyyaml>=6",
+    "pillow>=10",
+    "tzdata",
+]
+
+[project.optional-dependencies]
+cpu = ["av>=12"]
+gpu = ["torch>=2.2", "av>=12"]
+# Dekodowanie NVDEC; torchcodec musi pasować do wersji torch (instalacja w notebooku).
+nvdec = ["PyNVVideoCodec>=1.0"]
+astro = ["scipy", "astropy", "photutils", "skyfield", "sgp4"]
+dev = ["pytest>=7"]
+
+[project.scripts]
+skyhunt = "skyhunt.cli:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "skyhunt.__version__" }
+
+[tool.setuptools.packages.find]
+include = ["skyhunt*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["gpu: wymaga CUDA", "video: wymaga prawdziwego nagrania ($SKYHUNT_TEST_VIDEO)"]

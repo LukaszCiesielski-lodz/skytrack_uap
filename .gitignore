@@ -1,0 +1,16 @@
+# nagrania i wyniki — nie trafiają do repo
+*.mov
+*.MOV
+*.mp4
+*.MP4
+out/
+*_tracks/
+
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ipynb_checkpoints/
+.venv/

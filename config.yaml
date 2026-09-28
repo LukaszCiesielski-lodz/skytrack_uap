@@ -1,0 +1,78 @@
+# Konfiguracja skyhunt.
+# Każda sekcja wpływa na hash etapów, które od niej zależą (manifest.json):
+# zmiana wartości powoduje przeliczenie tych etapów i wszystkich zależnych.
+
+site:
+  name: "Łódź (SE)"
+  lat_deg: 51.718042
+  lon_deg: 19.582748
+  elevation_m: 210
+
+camera:
+  body: "Fujifilm X-E3"
+  lens: "Fujinon XF 50mm F1.0 R WR"
+  focal_mm: 50.0
+  f_number: 1.0
+  # Ostrość ustawiona ręcznie „tuż przed nieskończonością”, więc gwiazdy mogą być lekko
+  # nieostre. Odległość ostrzenia nieznana; wyznaczymy ją z PSF gwiazd (M4).
+  focus_distance_m: null
+  shutter_s: 0.041667      # 1/24 s (aparat: "SS 24"); weryfikacja z długości smug satelitów (M3)
+  sensor_width_mm: 23.5
+  nominal_hfov_deg: 26.4   # tylko wartość startowa; rzeczywiste pole z plate solve (M2)
+
+time:
+  camera_tz: "Europe/Warsaw"
+  # O ile zegar aparatu spieszy się względem czasu lokalnego [s]. Zegar poprawiony
+  # 28.09.2026; starsze nagrania mają własną wartość w sekcji `files`.
+  camera_clock_ahead_s: 0
+  # Źródło czasu startu: maker_datetime (data EXIF Fuji w udta; potwierdzone na 2 plikach,
+  # że to start – mvhd jest ~24 s po końcu nagrania), mvhd_creation, mvhd_creation_minus_duration.
+  start_source: maker_datetime
+  prior_sigma_s: 60        # 1σ niepewności a priori; właściwy czas z satelitów (M2)
+  sync_search_s: 7200      # zakres szukania poprawki zegara przy synchronizacji po satelitach
+
+astrometry:
+  hint_star: null          # najjaśniejsza gwiazda w kadrze (podpowiedź dla plate solve), per plik
+
+satellites:
+  # M2: dopasowanie torów do TLE (CelesTrak, archiwum z dnia nagrania) → NORAD ID, nazwa,
+  # wysokość, oświetlenie przez Słońce. Tolerancje dopasowania dojdą z implementacją.
+  tle_source: celestrak
+  label_with_norad_id: true
+
+paths:
+  raw_dir: /content/drive/MyDrive/skyhunt/raw
+  out_dir: /content/drive/MyDrive/skyhunt/out
+
+input:
+  extensions: [".mp4", ".mov"]
+
+decode:
+  # Kolejność prób; pierwszy działający backend jest używany w etapach obliczeniowych.
+  backends: [nvcodec, torchcodec, torchaudio, pyav, ffmpeg]
+  # Etapy obliczeniowe tylko z backendów dających oryginalne Y z bitstreamu
+  # (torchcodec zwraca RGB, więc Y jest odtwarzane z błędem ±1 DN).
+  exact_luma_required: true
+  torchcodec_full_range: false
+  batch_frames: 32         # klatek na paczkę (4K uint8: 8.3 MB/klatkę)
+  queue_depth: 3           # paczek w kolejce producenta (backendy CPU)
+  gpu_id: 0
+  device: cuda             # cuda | cpu (cpu: wyniki backendów CPU zostają w RAM)
+
+stack:
+  stats_subsample: 8       # co który piksel w każdej osi do kwantyli per klatka
+  frame_quantiles: [0.5, 0.999]
+  preview_percentiles: [0.5, 99.9]
+
+bench:
+  frames: 480              # 20 s nagrania
+
+# Nadpisania per plik (klucz = nazwa pliku); nakładane na całą konfigurację.
+files:
+  DSCF4641.MOV:
+    time:
+      camera_clock_ahead_s: 600   # zegar spieszył się o 10 min (przed korektą 28.09)
+    astrometry:
+      hint_star: Deneb
+  dark_frames.MOV:
+    role: dark                    # zakryty obiektyw: do FAR i mapy hot pikseli
