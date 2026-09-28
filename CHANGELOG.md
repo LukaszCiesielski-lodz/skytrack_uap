@@ -1,5 +1,17 @@
 # CHANGELOG
 
+## Poprawki po pierwszym przebiegu na prawdziwych danych — 2026-09-28
+
+- **`detect`:** limit komponentów na klatkę liczony tylko dla komponentów z maksimum ≥ `snr_seed`.
+  - Wcześniej każda klatka była odrzucana, bo przekraczała limit komponentów rozrostu.
+  - DSCF4641: 4,04 mln detekcji (mediana 522/klatkę), 0 klatek odrzuconych, 49 kl/s (L4).
+  - Wynik: 359 torów.
+- **`astrometry`:** `solve-field` uruchamiane z `--no-remove-lines --uniformize 0`.
+  - Pomocnicze skrypty Pythona z pakietu apt ładowały NumPy 2 z Colaba i padały na `np.string_`.
+  - Indeksy i pliki robocze są teraz kopiowane na dysk lokalny.
+- **`dark_frames.MOV`:** `detect.sigma_floor_dn: 1.5` (≈ σ nieba).
+  - H.264 kwantuje czerń, więc przy podłodze 0,5 DN 79% klatek było odrzucanych.
+
 ## Raport PDF, synchronizacja czasu, NORAD — 2026-09-28 (0.2.0)
 
 **Dodane (kod i testy offline; nic jeszcze nie uruchomione na prawdziwych danych):**

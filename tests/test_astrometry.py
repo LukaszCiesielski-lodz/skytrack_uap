@@ -22,6 +22,7 @@ def test_solve_command_has_hint_and_scale(cfg, tmp_path):
     assert "--ra 310.35" in s and "--dec 45.28" in s and "--radius 20" in s
     assert "--scale-units degwidth" in s and "--scale-low 12" in s and "--scale-high 32" in s
     assert "--tweak-order 3" in s and "--downsample 2" in s and cmd[-1].endswith("e.fits")
+    assert "--no-remove-lines" in s and "--uniformize 0" in s   # bez pomocników w Pythonie (NumPy 2)
     cfgfile = write_solver_config(tmp_path / "idx", tmp_path / "s.cfg")
     assert f"add_path {tmp_path / 'idx'}" in cfgfile.read_text()
 

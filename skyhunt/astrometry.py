@@ -72,8 +72,10 @@ def write_solver_config(index_dir: Path, path: Path) -> Path:
 
 def solve_command(acfg: dict, image: Path, outdir: Path, base: str, config: Path,
                   hint: tuple[float, float] | None, downsample: int) -> list[str]:
+    # --no-remove-lines / --uniformize 0: te kroki uruchamiają skrypty Pythona z pakietu apt
+    # (astrometry.util.*), które na Colabie ładują NumPy 2 i padają na `np.string_`.
     cmd = [str(acfg.get("solve_field", "solve-field")), "--config", str(config), "--overwrite", "--no-plots",
-           "--new-fits", "none", "--crpix-center",
+           "--new-fits", "none", "--crpix-center", "--no-remove-lines", "--uniformize", "0",
            "--scale-units", "degwidth", "--scale-low", str(acfg["scale_low_deg"]),
            "--scale-high", str(acfg["scale_high_deg"]),
            "--tweak-order", str(acfg["tweak_order"]), "--downsample", str(downsample),

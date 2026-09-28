@@ -201,3 +201,8 @@ files:
       hint_star: Deneb
   dark_frames.MOV:
     role: dark                    # zakryty obiektyw: do FAR i mapy hot pikseli
+    detect:
+      # H.264 kwantuje czerń do stałej (MAD = 0), więc przy podłodze 0.5 DN każdy blok 8×8
+      # o +1 DN był detekcją (79% klatek oflagowanych). Podłoga ≈ σ nieba z DSCF4641 daje
+      # FAR przy tym samym progu w DN co na niebie.
+      sigma_floor_dn: 1.5
