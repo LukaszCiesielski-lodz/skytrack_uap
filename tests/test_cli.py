@@ -1,4 +1,4 @@
-"""Całość na syntetycznym wideo (CPU): probe → stack, wznawianie, status, bench."""
+"""Całość na syntetycznym wideo (CPU): probe → stack → detect → tracks, rola dark, status, bench."""
 import json
 
 import numpy as np
@@ -6,7 +6,7 @@ import pytest
 
 from skyhunt.cli import iter_inputs, main
 from skyhunt.io import read_json
-from tests.conftest import ROOT, SYN_N
+from tests.conftest import ROOT, SYN_N, dot_position
 
 CPU = ["--config", str(ROOT / "config.yaml"), "--set", "decode.device=cpu",
        "--set", "decode.backends=[pyav, ffmpeg]", "--set", "decode.batch_frames=8"]
@@ -14,7 +14,7 @@ CPU = ["--config", str(ROOT / "config.yaml"), "--set", "decode.device=cpu",
 
 def test_run_end_to_end(tmp_path, synthetic_video):
     out = tmp_path / "out"
-    assert main(["run", str(synthetic_video), "--out", str(out), *CPU]) == 0
+    assert main(["run", str(synthetic_video), "--out", str(out), "--stages", "stack", *CPU]) == 0
     d = out / synthetic_video.stem
     man = read_json(d / "manifest.json")
     assert man["stages"]["probe"]["status"] == "done"
@@ -29,8 +29,46 @@ def test_run_end_to_end(tmp_path, synthetic_video):
 
     # drugie uruchomienie: wszystko z cache
     finished = st["finished_at"]
-    assert main(["run", str(synthetic_video), "--out", str(out), *CPU]) == 0
+    assert main(["run", str(synthetic_video), "--out", str(out), "--stages", "stack", *CPU]) == 0
     assert read_json(d / "manifest.json")["stages"]["stack"]["finished_at"] == finished
+
+
+def test_detect_and_tracks_on_synthetic_video(tmp_path, synthetic_video):
+    pytest.importorskip("torch")
+    pd = pytest.importorskip("pandas")
+    pytest.importorskip("scipy")
+    pytest.importorskip("astropy")
+    out = tmp_path / "out"
+    assert main(["run", str(synthetic_video), "--out", str(out), "--stages", "tracks", *CPU]) == 0
+    d = out / synthetic_video.stem
+    det = pd.read_parquet(d / "detections.parquet")
+    hits = 0
+    for i in range(SYN_N):
+        x0, y0 = dot_position(i)
+        f = det[det["frame"] == i]
+        hits += bool(len(f)) and np.hypot(f["x"] - x0, f["y"] - y0).min() <= 1.5
+    assert hits >= 0.9 * SYN_N
+    tr = pd.read_parquet(d / "tracks.parquet")
+    assert len(tr) >= 1
+    best = tr.iloc[(tr["n"]).idxmax()]
+    assert best["speed_px_frame"] == pytest.approx(np.hypot(2, 0.5), rel=0.1)
+    assert read_json(d / "epochs.json")   # co najmniej jedna epoka do plate solve
+
+
+def test_dark_role_runs_darkstats_only(tmp_path, synthetic_video):
+    pytest.importorskip("torch")
+    pytest.importorskip("pandas")
+    pytest.importorskip("scipy")
+    out = tmp_path / "out"
+    assert main(["run", str(synthetic_video), "--out", str(out), *CPU, "--set", "role=dark",
+                 "--set", "decode.batch_frames=8"]) == 0
+    d = out / synthetic_video.stem
+    stages = read_json(d / "manifest.json")["stages"]
+    assert stages["darkstats"]["status"] == "done"
+    assert "astrometry" not in stages and "report" not in stages
+    ds = read_json(d / "darkstats.json")
+    assert ds["duration_s"] > 0 and "tracks_per_hour" in ds
+    assert read_json(d / "epochs.json") == []   # bez epok dla nagrań ciemnych
 
 
 def test_status_and_probe(tmp_path, synthetic_video, capsys):

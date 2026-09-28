@@ -44,6 +44,37 @@ class TimePrior:
         return asdict(self)
 
 
+@dataclass
+class FrameClock:
+    """Czas klatki: τ (od startu nagrania, środek ekspozycji, opcjonalnie rolling shutter)
+    oraz UTC = start_prior + Δ + τ, gdzie Δ to poprawka zegara z synchronizacji."""
+    start_utc: datetime
+    fps: float
+    height: int
+    exposure_offset_s: float
+    rolling_shutter_s: float = 0.0
+    delta_s: float = 0.0
+
+    @classmethod
+    def from_config(cls, start_utc: datetime, meta: VideoMeta, camera_cfg: dict, delta_s: float = 0.0):
+        off = camera_cfg.get("exposure_offset_s")
+        if off is None:
+            off = float(camera_cfg["shutter_s"]) / 2
+        return cls(start_utc, meta.fps, meta.height, float(off), float(camera_cfg.get("rolling_shutter_s") or 0.0),
+                   delta_s)
+
+    def tau(self, frame, y=None):
+        import numpy as np
+
+        t = np.asarray(frame, float) / self.fps + self.exposure_offset_s
+        if y is not None and self.rolling_shutter_s:
+            t = t + self.rolling_shutter_s * np.asarray(y, float) / self.height
+        return t
+
+    def utc(self, tau: float) -> datetime:
+        return self.start_utc + timedelta(seconds=float(tau) + self.delta_s)
+
+
 def time_prior(meta: VideoMeta, tcfg: dict) -> TimePrior:
     tz, ahead = tcfg["camera_tz"], float(tcfg["camera_clock_ahead_s"])
     cands = {s: camera_start(meta, s) for s in START_SOURCES}

@@ -114,5 +114,44 @@ def validate(cfg: dict) -> None:
             errors.append(f"decode.backends: nieznane {unknown}, dostępne {list(BACKENDS)}")
     if not isinstance(cfg_get(cfg, "decode.batch_frames", None), int) or cfg["decode"]["batch_frames"] < 1:
         errors.append("decode.batch_frames: liczba całkowita >= 1")
+    det = cfg.get("detect") or {}
+    if det:
+        if not 0 < float(det.get("snr_grow", 0)) <= float(det.get("snr_seed", 0)):
+            errors.append("detect: wymagane 0 < snr_grow ≤ snr_seed")
+        if det.get("labeler") not in ("auto", "cupy", "scipy"):
+            errors.append("detect.labeler: auto | cupy | scipy")
+        if int(det.get("bg_stride", 0)) < 1 or int(det.get("bg_half_window_frames", 0)) < int(det.get("bg_stride", 1)):
+            errors.append("detect: bg_stride ≥ 1 i bg_half_window_frames ≥ bg_stride")
+    ast = cfg.get("astrometry") or {}
+    if "scale_low_deg" in ast and not 0 < float(ast["scale_low_deg"]) < float(ast["scale_high_deg"]):
+        errors.append("astrometry: wymagane 0 < scale_low_deg < scale_high_deg")
+    if any(not 4107 <= int(n) <= 4119 for n in ast.get("index_series", [])):
+        errors.append("astrometry.index_series: indeksy 4107–4119 (seria 4100)")
+    if ast.get("hint_star"):
+        from .sky import resolve_star
+        try:
+            resolve_star(str(ast["hint_star"]))
+        except KeyError as e:
+            errors.append(f"astrometry.hint_star: {e}")
+    idf = cfg.get("identify") or {}
+    if idf and idf.get("reference") not in ("first", "best", "median"):
+        errors.append("identify.reference: first | best | median")
+    sat = cfg.get("satellites") or {}
+    if sat and not sat.get("celestrak_groups"):
+        errors.append("satellites.celestrak_groups: niepusta lista")
+    rep = cfg.get("report") or {}
+    if rep and rep.get("identified_min_confidence") not in ("high", "medium", "low"):
+        errors.append("report.identified_min_confidence: high | medium | low")
+    for fname, over in (cfg.get("files") or {}).items():
+        if not isinstance(over, dict):
+            errors.append(f"files.{fname}: oczekiwano słownika nadpisań")
+        elif over.get("role", "sky") not in ("sky", "dark"):
+            errors.append(f"files.{fname}.role: sky | dark")
+        elif (over.get("astrometry") or {}).get("hint_star"):
+            from .sky import resolve_star
+            try:
+                resolve_star(str(over["astrometry"]["hint_star"]))
+            except KeyError as e:
+                errors.append(f"files.{fname}.astrometry.hint_star: {e}")
     if errors:
         raise ValueError("Błędy w config.yaml:\n  - " + "\n  - ".join(errors))

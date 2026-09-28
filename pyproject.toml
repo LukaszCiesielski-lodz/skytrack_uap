@@ -21,7 +21,8 @@ cpu = ["av>=12"]
 gpu = ["torch>=2.2", "av>=12"]
 # Dekodowanie NVDEC; torchcodec musi pasować do wersji torch (instalacja w notebooku).
 nvdec = ["PyNVVideoCodec>=1.0"]
-astro = ["scipy", "astropy", "photutils", "skyfield", "sgp4"]
+astro = ["scipy>=1.10", "astropy>=6", "skyfield>=1.49", "sgp4>=2.23", "pandas>=2", "pyarrow>=14"]
+report = ["matplotlib>=3.8", "pypdf>=4"]
 dev = ["pytest>=7"]
 
 [project.scripts]
@@ -33,6 +34,10 @@ version = { attr = "skyhunt.__version__" }
 [tool.setuptools.packages.find]
 include = ["skyhunt*"]
 
+[tool.setuptools.package-data]
+skyhunt = ["data/d3celestial/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["gpu: wymaga CUDA", "video: wymaga prawdziwego nagrania ($SKYHUNT_TEST_VIDEO)"]
+markers = ["gpu: wymaga CUDA", "video: wymaga prawdziwego nagrania ($SKYHUNT_TEST_VIDEO)",
+           "solver: wymaga solve-field i indeksów astrometry.net"]

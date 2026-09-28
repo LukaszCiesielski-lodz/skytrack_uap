@@ -121,6 +121,34 @@ def test_corrupted_manifest(tmp_path, video):
     assert m.data["stages"] == {} and m.reset_reason
 
 
+def test_roles_gate_stages(tmp_path, video, cfg):
+    calls: list = []
+    pl = Pipeline()
+
+    @pl.stage("a")
+    def a(ctx):
+        calls.append("a")
+        return {}
+
+    @pl.stage("sky_only", requires=("a",), roles=("sky",))
+    def s(ctx):
+        calls.append("sky_only")
+        return {}
+
+    @pl.stage("dark_only", requires=("a",), roles=("dark",))
+    def d(ctx):
+        calls.append("dark_only")
+        return {}
+
+    out = tmp_path / "out"
+    assert pl.run(video, cfg, out) == {"a": "done", "sky_only": "done", "dark_only": "n/a"}
+    calls.clear()
+    st = pl.run(video, deep_merge(cfg, {"role": "dark"}), tmp_path / "out_dark")
+    assert st == {"a": "done", "sky_only": "n/a", "dark_only": "done"}
+    assert calls == ["a", "dark_only"]
+    assert "sky_only" not in read_json(tmp_path / "out_dark" / "v" / "manifest.json")["stages"]
+
+
 def test_registration_order_enforced():
     pl = Pipeline()
     with pytest.raises(ValueError):

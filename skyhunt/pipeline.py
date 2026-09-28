@@ -18,6 +18,13 @@ from .config import config_for_file, config_hash
 from .io import read_json, write_json
 from .manifest import Manifest
 
+ALL_ROLES = ("sky", "dark")
+
+
+def file_role(cfg: dict) -> str:
+    """Rola pliku z configu (sekcja ``files``): ``sky`` (domyślnie) albo ``dark``."""
+    return str(cfg.get("role") or "sky")
+
 
 @dataclass(frozen=True)
 class Stage:
@@ -26,6 +33,7 @@ class Stage:
     sections: tuple[str, ...]
     requires: tuple[str, ...]
     rev: int
+    roles: tuple[str, ...] = ALL_ROLES
 
 
 @dataclass
@@ -35,6 +43,14 @@ class StageContext:
     cfg: dict
     manifest: Manifest
     log: logging.Logger
+
+    @property
+    def role(self) -> str:
+        return file_role(self.cfg)
+
+    @property
+    def out_root(self) -> Path:
+        return self.outdir.parent
 
     def read_json(self, name: str) -> Any:
         return read_json(self.outdir / name)
@@ -47,10 +63,12 @@ class Pipeline:
     def __init__(self) -> None:
         self.stages: dict[str, Stage] = {}
 
-    def stage(self, name: str, sections: Iterable[str] = (), requires: Iterable[str] = (), rev: int = 1):
+    def stage(self, name: str, sections: Iterable[str] = (), requires: Iterable[str] = (), rev: int = 1,
+              roles: Iterable[str] = ALL_ROLES):
         """Dekorator rejestrujący etap. Wymagane etapy muszą być zarejestrowane wcześniej,
-        więc kolejność rejestracji jest zarazem kolejnością wykonania."""
-        requires = tuple(requires)
+        więc kolejność rejestracji jest zarazem kolejnością wykonania. ``roles``: dla jakich
+        plików etap ma sens (np. astrometria tylko dla ``sky``, statystyki ciemne dla ``dark``)."""
+        requires, roles = tuple(requires), tuple(roles)
 
         def deco(func):
             if name in self.stages:
@@ -58,7 +76,7 @@ class Pipeline:
             missing = [r for r in requires if r not in self.stages]
             if missing:
                 raise ValueError(f"etap {name!r} wymaga niezarejestrowanych: {missing}")
-            self.stages[name] = Stage(name, func, tuple(sections), requires, rev)
+            self.stages[name] = Stage(name, func, tuple(sections), requires, rev, roles)
             return func
 
         return deco
@@ -102,8 +120,8 @@ class Pipeline:
 
     def run(self, video_path: Path, cfg: dict, out_root: Path, only: Iterable[str] | None = None,
             force: Iterable[str] = (), log: logging.Logger | None = None) -> dict[str, str]:
-        """Uruchamia etapy dla jednego pliku. Zwraca {etap: 'cached' | 'done'}; błąd etapu
-        jest zapisywany w manifeście i przerywa dalsze etapy tego pliku."""
+        """Uruchamia etapy dla jednego pliku. Zwraca {etap: 'cached' | 'done' | 'n/a'}; błąd
+        etapu jest zapisywany w manifeście i przerywa dalsze etapy tego pliku."""
         video_path = Path(video_path)
         log = log or logging.getLogger("skyhunt")
         cfg = config_for_file(cfg, video_path)
@@ -117,7 +135,11 @@ class Pipeline:
         ctx = StageContext(video_path, outdir, cfg, man, log)
         memo: dict[str, str] = {}
         status: dict[str, str] = {}
+        role = file_role(cfg)
         for name in names:
+            if role not in self.stages[name].roles:
+                status[name] = "n/a"
+                continue
             h = self.stage_hash(name, cfg, memo)
             if name not in forced and man.is_done(name, h):
                 status[name] = "cached"

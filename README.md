@@ -9,11 +9,31 @@ Pełna specyfikacja: [docs/HANDOFF_skyhunt.md](docs/HANDOFF_skyhunt.md). Baselin
 | Kamień | Zakres | Stan |
 |---|---|---|
 | M0 | repo, config, notebook Colab, dekodowanie GPU z pomiarem, manifest i wznawianie | kod gotowy, czeka na pierwsze uruchomienie na Colab |
-| M1 | tło, szum, maski, detektor per klatka, tory, regresja na pliku pilotażowym | – |
-| M2 | plate solve, WCS, synchronizacja czasu po satelitach, identyfikacja TLE (NORAD) | – |
-| M3 | shift-and-stack na GPU, FAR z tasowania, injection–recovery | – |
-| M4 | tory nieliniowe, odległość z rozmycia, klasy biologiczne, meteory, samoloty | – |
-| M5 | scoring anomalii, raport HTML, wycinki | – |
+| Raport | detektor per klatka, tory, plate solve, synchronizacja czasu po satelitach, NORAD, PDF z konstelacjami i wycinkami | kod gotowy, czeka na pierwsze uruchomienie na Colab |
+| M3 | shift-and-stack na GPU (słabe obiekty), FAR z tasowania, injection–recovery | – |
+| M4 | tory nieliniowe, odległość z rozmycia, klasy biologiczne, meteory, samoloty (ADS-B) | – |
+| M5 | scoring anomalii | – |
+
+## Raport
+
+Dla każdego nagrania nieba w `out/<plik>/report/`:
+
+| plik | zawartość |
+|---|---|
+| `summary.pdf` | cały kadr z konstelacjami i wszystkimi torami; poprawka czasu i jej zgodność między satelitami; tabela torów; satelity przewidziane w kadrze, a niewykryte; FAR z nagrania ciemnego |
+| `objects/sat_<NORAD>_t<id>.pdf` | zidentyfikowany satelita: tło gwiazd, konstelacje (np. Łabędź), nazwy gwiazd, tor na zielono z kreskami co 1 s, predykcja z elementów orbit; NORAD, nazwa, COSPAR, odległość, wysokość, oświetlenie; strona 2: pasek 12 klatek z ≥ 1 s nagrania; klip MP4 w załączniku PDF |
+| `objects/unid_t<id>.pdf` | obiekt niezidentyfikowany: tor **na czerwono** na tle gwiazd; prędkość kątowa [°/s], czas przelotu, początek i koniec w UTC (± niepewność poprawki czasu), RA/Dec i Az/Alt, podpowiedź klasy, niesprawdzone hipotezy |
+| `clips/t<id>.mp4` | wycinek ≥ 1 s wokół toru, obiekt zaznaczony okręgiem |
+
+**Synchronizacja czasu.** Pozycje torów na niebie liczymy z plate solve i modelu nieruchomej kamery: piksel ↔ stały kierunek Alt/Az. Nie zależą one od błędu zegara. Tory proste o prędkościach LEO porównujemy z przelotami z elementów orbit (SGP4) w oknie ±5σ wokół czasu z metadanych, a gdy to nie wystarczy, w ±2 h.
+
+- Poprawka Δ pochodzi z **pierwszego zidentyfikowanego satelity**.
+- Uznajemy ją, gdy co najmniej 2 niezależne tory dają zgodne δ (±1 s). Pojedyncze dopasowanie ma pewność `low`, bo równoległe powłoki Starlinka łatwo pomylić.
+- Pozostałe satelity identyfikujemy już przy ustalonym Δ i raportujemy rozrzut ich δ.
+
+**Elementy orbit.** CelesTrak udostępnia tylko bieżące elementy, więc snapshot trzeba zamrozić krótko po nagraniu (komórka w notebooku). Jest zapisywany w `cache/gp/` na Drive, a kopia użytych elementów trafia do `gp_elements.csv` przy wynikach. Format to CSV/OMM, bo numery NORAD ≥ 100000 nie mieszczą się w TLE. Space-Track (historia elementów, pełny katalog z członami rakiet i śmieciami) jest opcjonalny: login wpisujesz w Colab Secrets.
+
+Dane konstelacji i nazw gwiazd: [d3-celestial](https://github.com/ofrohn/d3-celestial) (BSD-3, © Olaf Frohn), w `skyhunt/data/d3celestial/`.
 
 ## Dane
 
