@@ -126,3 +126,48 @@ def test_spacetrack_disabled_without_env(tmp_path, monkeypatch):
     monkeypatch.delenv("SPACETRACK_USER", raising=False)
     monkeypatch.delenv("SPACETRACK_PASSWORD", raising=False)
     assert fetch_spacetrack(scfg(tmp_path), T_REC, now=NOW) is None
+
+
+ISS_TLE = ("0 ISS (ZARYA)\n"
+           "1 25544U 98067A   19343.69339541  .00001764  00000-0  38792-4 0  9991\n"
+           "2 25544  51.6439 211.2001 0007417  17.6667  85.6398 15.50103472202482\n")
+
+
+def classfd_zip(text=ISS_TLE) -> bytes:
+    import io
+    import zipfile
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("classfd.tle", text)
+    return buf.getvalue()
+
+
+def test_tle_to_omm_rows_three_line_format():
+    pytest.importorskip("sgp4")
+    from skyhunt.satellites import tle_to_omm_rows
+
+    rows = tle_to_omm_rows("naglowek bez znaczenia\n" + ISS_TLE + "1 zepsuta linia\n")
+    assert len(rows) == 1
+    assert int(rows[0]["NORAD_CAT_ID"]) == 25544 and rows[0]["OBJECT_NAME"] == "ISS (ZARYA)"
+
+
+def test_classfd_fetched_converted_and_loaded(tmp_path):
+    pytest.importorskip("sgp4")
+    from skyhunt.satellites import fetch_classfd, load_catalog
+
+    class ZipOpener(Opener):
+        def __call__(self, url, data=None, timeout=None):
+            self.urls.append(url)
+            return Resp(classfd_zip())
+
+    cfg = {**scfg(tmp_path), "classfd": "auto", "classfd_url": "https://mmccants.org/tles/classfd.zip"}
+    op = ZipOpener()
+    snap = fetch_classfd(cfg, T_REC, now=NOW, opener=op)
+    assert snap["source"] == "classfd" and op.urls == [cfg["classfd_url"]]
+    assert [s["source"] for s in list_snapshots(tmp_path)] == ["classfd"]
+    assert fetch_classfd(cfg, T_REC, now=NOW, opener=op)["path"] == snap["path"]   # bez ponownego pobrania
+    assert len(op.urls) == 1
+    cat = load_catalog([(snap["path"], "classfd")], T_REC)
+    assert list(cat.norad) == [25544] and cat.source == ["classfd"]
+    assert fetch_classfd({**cfg, "classfd": "off"}, T_REC, now=NOW, opener=op) is None

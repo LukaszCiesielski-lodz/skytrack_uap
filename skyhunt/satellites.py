@@ -31,7 +31,7 @@ log = logging.getLogger("skyhunt")
 
 EARTH_RADIUS_KM = 6378.137
 SIDEREAL_DEG_S = 360.0 / 86164.0905
-_SNAP = re.compile(r"^(?P<src>celestrak|spacetrack)_(?P<group>.+)_(?P<stamp>\d{8}T\d{4}Z)\.csv$")
+_SNAP = re.compile(r"^(?P<src>celestrak|spacetrack|classfd)_(?P<group>.+)_(?P<stamp>\d{8}T\d{4}Z)\.csv$")
 SPACETRACK_LOGIN = "https://www.space-track.org/ajaxauth/login"
 SPACETRACK_QUERY = ("https://www.space-track.org/basicspacedata/query/class/gp_history/EPOCH/{a}--{b}"
                     "/orderby/NORAD_CAT_ID%20asc/format/csv")
@@ -139,6 +139,75 @@ def fetch_spacetrack(scfg: dict, t_rec: datetime, *, now: datetime | None = None
     path = cache / f"spacetrack_{group}_{_stamp(now)}.csv"
     path.write_bytes(data)
     return {"path": path, "source": "spacetrack", "group": group, "fetched": now}
+
+
+def tle_to_omm_rows(text: str) -> list[dict]:
+    """TLE (2 lub 3 linie na obiekt) → wiersze OMM, jak w CSV z CelesTrak/Space-Track."""
+    from sgp4.api import Satrec
+    from sgp4.exporter import export_omm
+
+    lines = [ln.rstrip() for ln in text.splitlines() if ln.strip()]
+    rows = []
+    for k in range(len(lines) - 1):
+        l1, l2 = lines[k], lines[k + 1]
+        if not (l1.startswith("1 ") and l2.startswith("2 ")):
+            continue
+        name = lines[k - 1] if k > 0 and not lines[k - 1].startswith(("1 ", "2 ")) else ""
+        name = name[2:] if name.startswith("0 ") else name
+        try:
+            sat = Satrec.twoline2rv(l1, l2)
+        except (ValueError, IndexError):
+            continue
+        if getattr(sat, "error", 0):
+            continue
+        rows.append(export_omm(sat, name[:24].strip() or f"NORAD {sat.satnum}"))
+    return rows
+
+
+def _zip_text(data: bytes) -> str:
+    import io
+    import zipfile
+
+    with zipfile.ZipFile(io.BytesIO(data)) as z:
+        names = [n for n in z.namelist() if n.lower().endswith((".tle", ".txt"))] or z.namelist()
+        return z.read(names[0]).decode("latin-1")
+
+
+def fetch_classfd(scfg: dict, t_rec: datetime, *, now: datetime | None = None,
+                  opener: Callable = urllib.request.urlopen) -> dict | None:
+    """Elementy satelitów nieobecnych w publicznych katalogach (głównie wojskowych), prowadzone
+    przez amatorską sieć obserwatorów (Mike McCants, classfd.zip). Snapshot na Drive jak CelesTrak:
+    najwcześniejszy pobrany po nagraniu, inaczej pobranie (nie częściej niż ``min_refetch_h``)."""
+    if str(scfg.get("classfd", "auto")) == "off":
+        return None
+    import zipfile
+
+    now = now or datetime.now(timezone.utc)
+    cache = Path(scfg["cache_dir"])
+    cache.mkdir(parents=True, exist_ok=True)
+    snaps = sorted((s for s in list_snapshots(cache) if s["source"] == "classfd"), key=lambda s: s["fetched"])
+    after = [s for s in snaps if s["fetched"] >= t_rec]
+    if after:
+        return after[0]
+    if not [s for s in snaps if (now - s["fetched"]).total_seconds() < float(scfg["min_refetch_h"]) * 3600]:
+        try:
+            rows = tle_to_omm_rows(_zip_text(fetch_url(str(scfg["classfd_url"]), opener)))
+        except (FetchError, OSError, zipfile.BadZipFile, UnicodeDecodeError) as e:
+            log.warning("classfd: %s", e)
+        else:
+            if rows:
+                path = cache / f"classfd_elements_{_stamp(now)}.csv"
+                with open(path, "w", newline="", encoding="utf-8") as fh:
+                    w = csv.DictWriter(fh, list(rows[0].keys()), extrasaction="ignore")
+                    w.writeheader()
+                    w.writerows(rows)
+                log.info("classfd: %d obiektów", len(rows))
+                return {"path": path, "source": "classfd", "group": "elements", "fetched": now}
+            log.warning("classfd: brak elementów w pliku")
+    if snaps:
+        log.warning("classfd: brak snapshotu po nagraniu, używam %s", snaps[-1]["path"].name)
+        return snaps[-1]
+    return None
 
 
 # ---------------------------------------------------------------- katalog
@@ -597,6 +666,31 @@ def identify_tracks(observer: Observer, catalog: Catalog, tracks: list[TrackSky]
                     and m.dir_deg <= float(icfg["id_dir_tol_deg"])):
                 found.append(m)
         found.sort(key=lambda m: m.rms_deg)
+        wide_t = float(icfg.get("classfd_dt_tol_s", 0.0))
+        if not found and wide_t > tol_t:
+            # elementy amatorskie (classfd) bywają sprzed wielu dni: błąd wzdłuż orbity to sekundy
+            # albo minuty, więc szersze okno czasu, ale tylko kandydat z pewnością „low”
+            for i, d0 in candidate_pairs(grid, tr, icfg, delta_s - wide_t, delta_s + wide_t,
+                                         max(float(icfg["cross_tol_deg"]) * 3, 0.3), float(icfg["speed_tol"]),
+                                         float(icfg["dir_tol_deg"])):
+                if catalog.source[i] != "classfd":
+                    continue
+                m = fine_align(observer, catalog, i, tr, d0, float(icfg["refine_half_range_s"]))
+                if (m is not None and m.cross_deg <= float(icfg["cross_tol_deg"])
+                        and abs(m.speed_ratio - 1) <= float(icfg["id_speed_tol"])
+                        and m.dir_deg <= float(icfg["id_dir_tol_deg"])):
+                    found.append(m)
+            found.sort(key=lambda m: m.rms_deg)
+            if found:
+                best = found[0]
+                age = (abs((catalog.epoch[best.cat_index] - observer.t_ref).total_seconds()) / 86400)
+                best.confidence = "low"
+                best.ambiguous_with = [m.norad for m in found[1:]]
+                best.reason = (f"kandydat z katalogu amatorskiego classfd (epoka sprzed {age:.1f} d): "
+                               f"residuum poprzeczne {best.cross_deg * 3600:.0f}″, δ−Δ = {best.delta_s - delta_s:+.1f} s "
+                               f"(stare elementy), prędkość ×{best.speed_ratio:.3f}, kierunek {best.dir_deg:.2f}°")
+                out[tr.track_id] = found
+                continue
         if found:
             best = found[0]
             amb = [m for m in found[1:] if m.rms_deg <= best.rms_deg * float(icfg["ambiguity_ratio"])]

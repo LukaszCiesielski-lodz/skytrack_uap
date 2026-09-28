@@ -121,6 +121,10 @@ satellites:
   max_elements_age_days: 3
   min_refetch_h: 2           # CelesTrak: 1 pobranie na aktualizację; 403 = blokada
   spacetrack: auto           # auto (gdy są $SPACETRACK_USER/$SPACETRACK_PASSWORD) | off
+  # Satelity nieobecne w publicznych katalogach (głównie wojskowe), śledzone przez amatorską
+  # sieć obserwatorów (Mike McCants). Elementy bywają sprzed wielu dni → tylko kandydaci „low”.
+  classfd: auto              # auto | off
+  classfd_url: https://mmccants.org/tles/classfd.zip
   history_days_before: 3
   history_days_after: 1
   ephemeris_dir: /content/drive/MyDrive/skyhunt/cache/skyfield   # de421.bsp (oświetlenie)
@@ -146,6 +150,7 @@ identify:
   tle_along_track_sigma_km: 1.0
   cross_tol_deg: 0.1         # identyfikacja przy ustalonym Δ
   dt_tol_s: 2.0
+  classfd_dt_tol_s: 120      # szersze okno δ−Δ dla elementów classfd (stare elementy: błąd wzdłuż orbity)
   id_speed_tol: 0.05
   id_dir_tol_deg: 2
   ambiguity_ratio: 1.5

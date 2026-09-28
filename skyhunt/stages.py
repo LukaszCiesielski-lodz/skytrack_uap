@@ -255,14 +255,16 @@ def astrometry(ctx: StageContext) -> dict:
 
 # ---------------------------------------------------------------- satelity
 
-@PIPELINE.stage("tle", sections=("satellites",), requires=("probe",), rev=1, roles=("sky",))
+@PIPELINE.stage("tle", sections=("satellites",), requires=("probe",), rev=2, roles=("sky",))
 def tle(ctx: StageContext) -> dict:
     """Zamrożony snapshot elementów orbit dla nagrania (CelesTrak ± Space-Track)."""
-    from .satellites import fetch_spacetrack, load_catalog, select_celestrak, write_catalog_csv
+    from .satellites import fetch_classfd, fetch_spacetrack, load_catalog, select_celestrak, write_catalog_csv
 
     scfg = ctx.cfg["satellites"]
     t_rec = prior_start(ctx)
     snaps = select_celestrak(scfg, t_rec)
+    cf = fetch_classfd(scfg, t_rec)
+    snaps += [cf] if cf else []
     st = fetch_spacetrack(scfg, t_rec)
     files = [(s["path"], s["source"]) for s in snaps] + ([(st["path"], "spacetrack")] if st else [])
     if not files:
@@ -272,15 +274,18 @@ def tle(ctx: StageContext) -> dict:
     write_catalog_csv(files, cat, ctx.outdir / "gp_elements.csv")
     ages = np.array([(t_rec - e).total_seconds() / 86400 for e in cat.epoch])
     info = {"n_objects": len(cat), "spacetrack": st is not None,
+            "n_classfd": int(sum(s == "classfd" for s in cat.source)),
             "files": [{"name": Path(s["path"]).name, "source": s["source"], "group": s["group"],
                        "fetched": s["fetched"].isoformat()} for s in snaps + ([st] if st else [])],
             "age_days_median": float(np.median(np.abs(ages))) if len(ages) else None,
             "age_days_max": float(np.max(np.abs(ages))) if len(ages) else None}
     ctx.write_json("gp_source.json", info)
-    ctx.log.info("[%s] katalog: %d obiektów, mediana wieku elementów %.2f d%s", ctx.video_path.name, len(cat),
-                 info["age_days_median"] or float("nan"), " (+Space-Track)" if st else "")
+    ctx.log.info("[%s] katalog: %d obiektów (w tym %d z classfd), mediana wieku elementów %.2f d%s",
+                 ctx.video_path.name, len(cat), info["n_classfd"], info["age_days_median"] or float("nan"),
+                 " (+Space-Track)" if st else "")
     return {"outputs": ["gp_elements.csv", "gp_source.json"],
-            "metrics": {k: info[k] for k in ("n_objects", "spacetrack", "age_days_median", "age_days_max")}}
+            "metrics": {k: info[k] for k in ("n_objects", "spacetrack", "n_classfd", "age_days_median",
+                                             "age_days_max")}}
 
 
 @PIPELINE.stage("identify", sections=("identify", "classify", "site", "time", "camera", "satellites.ephemeris_dir",
