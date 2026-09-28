@@ -28,7 +28,7 @@ def _to_numpy(y) -> np.ndarray:
 
 def environment_info() -> dict:
     info = {"python": platform.python_version(), "platform": platform.platform()}
-    for mod in ("torch", "av", "PyNVVideoCodec", "torchcodec", "torchaudio", "numpy"):
+    for mod in ("torch", "av", "PyNvVideoCodec", "torchcodec", "torchaudio", "numpy"):
         try:
             info[mod] = __import__(mod).__version__
         except Exception:  # noqa: BLE001
@@ -99,7 +99,7 @@ def to_markdown(results: list[dict], meta: VideoMeta, env: dict, n_frames: int) 
     lines = [
         f"Plik: `{Path(meta.path).name}` ({meta.width}×{meta.height} {meta.codec}, {meta.fps:.3f} fps), "
         f"{n_frames} klatek; GPU: {env.get('gpu', 'brak')}; torch {env.get('torch')}, "
-        f"PyAV {env.get('av')}, PyNVVideoCodec {env.get('PyNVVideoCodec')}, "
+        f"PyAV {env.get('av')}, PyNvVideoCodec {env.get('PyNvVideoCodec')}, "
         f"torchcodec {env.get('torchcodec')}, torchaudio {env.get('torchaudio')}",
         "",
         "| backend | urządzenie | init [s] | kl/s | × czas rzecz. | max |ΔY| vs ref | uwagi |",

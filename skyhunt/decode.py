@@ -2,7 +2,7 @@
 
 Backendy (kolejność prób ustala ``decode.backends`` w configu):
 
-- ``nvcodec``    PyNVVideoCodec (NVDEC); klatki NV12 od razu w pamięci GPU, bierzemy płaszczyznę Y.
+- ``nvcodec``    PyNvVideoCodec (NVDEC); klatki NV12 od razu w pamięci GPU, bierzemy płaszczyznę Y.
 - ``torchcodec`` torchcodec ``VideoDecoder(device="cuda")``; zwraca RGB, Y odtwarzamy
                  (niedokładnie, ±1 DN), więc domyślnie tylko do benchmarku.
 - ``torchaudio`` ``torchaudio.io.StreamReader`` z dekoderem ``*_cuvid``; zwraca YUV444, kanał 0 = Y.
@@ -114,11 +114,11 @@ class NvCodecDecoder(Decoder):
     gpu_native = True
 
     def _check(self) -> None:
-        import PyNVVideoCodec  # noqa: F401
+        import PyNvVideoCodec  # noqa: F401
         _require_cuda()
 
     def _batches(self, batch_size, limit):
-        import PyNVVideoCodec as nvc
+        import PyNvVideoCodec as nvc
         import torch
 
         H, W = self.meta.height, self.meta.width
