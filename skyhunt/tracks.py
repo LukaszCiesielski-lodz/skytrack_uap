@@ -17,7 +17,10 @@ import numpy as np
 def static_mask(frame: np.ndarray, x: np.ndarray, y: np.ndarray, fps: float, tcfg: dict) -> np.ndarray:
     """True dla detekcji w komórkach „statycznych” (gwiazdy, hot piksele): w oknie
     ``static_window_s`` komórka ``static_cell_px`` z sąsiadami 3×3 ma ≥ ``static_min_count``
-    trafień rozłożonych na ≥ ``static_min_span_s``."""
+    trafień w ≥ ``static_min_seconds`` różnych sekundach nagrania.
+
+    Liczymy różne sekundy, a nie rozpiętość czasu: przelatujący obiekt siedzi w komórce
+    1–2 s, więc jedno przypadkowe trafienie szumu kilka sekund później nie czyni go statycznym."""
     n = len(frame)
     if n == 0:
         return np.zeros(0, bool)
@@ -32,16 +35,15 @@ def static_mask(frame: np.ndarray, x: np.ndarray, y: np.ndarray, fps: float, tcf
     # każda detekcja „głosuje” na swoją komórkę i 8 sąsiadów
     offs = [(dx, dy) for dx in (-1, 0, 1) for dy in (-1, 0, 1)]
     ekeys = np.concatenate([key(chunk, cx + dx, cy + dy) for dx, dy in offs])
-    efr = np.tile(frame, len(offs))
+    esec = np.tile((frame // max(1, int(round(fps)))).astype(np.int64), len(offs))
     uniq, inv = np.unique(ekeys, return_inverse=True)
+    inv = inv.ravel()
     count = np.bincount(inv, minlength=len(uniq))
-    fmin = np.full(len(uniq), np.iinfo(np.int64).max)
-    fmax = np.full(len(uniq), np.iinfo(np.int64).min)
-    np.minimum.at(fmin, inv, efr)
-    np.maximum.at(fmax, inv, efr)
+    # liczba różnych sekund z trafieniami dla każdej komórki
+    pairs = np.unique(inv * (int(esec.max()) + 1) + esec)
+    n_sec = np.bincount(pairs // (int(esec.max()) + 1), minlength=len(uniq))
     own = inv[4 * n:5 * n]          # przesunięcie (0, 0) to piąty blok
-    span_s = (fmax[own] - fmin[own]) / fps
-    return (count[own] >= int(tcfg["static_min_count"])) & (span_s >= float(tcfg["static_min_span_s"]))
+    return (count[own] >= int(tcfg["static_min_count"])) & (n_sec[own] >= int(tcfg["static_min_seconds"]))
 
 
 # ---------------------------------------------------------------- łączenie

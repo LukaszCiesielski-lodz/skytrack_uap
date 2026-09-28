@@ -247,12 +247,18 @@ def luma_plane(frame) -> np.ndarray:
     return frame.to_ndarray(format="gray")
 
 
+_PICT_TYPES = {0: None, 1: "I", 2: "P", 3: "B", 4: "S", 5: "SI", 6: "SP", 7: "BI"}   # AVPictureType
+
+
 def pict_type(frame) -> str | None:
+    """Typ klatki jako 'I'/'P'/'B'. PyAV zwraca zależnie od wersji str, enum albo liczbę."""
     pt = getattr(frame, "pict_type", None)
     if pt is None:
         return None
-    name = getattr(pt, "name", None) or str(pt)   # PyAV >= 12: enum; starsze: str
-    return name.rsplit(".", 1)[-1]
+    if isinstance(pt, int):
+        return _PICT_TYPES.get(int(pt), str(int(pt)))
+    name = (getattr(pt, "name", None) or str(pt)).rsplit(".", 1)[-1]
+    return _PICT_TYPES.get(int(name), name) if name.isdigit() else name
 
 
 def rgb_to_luma(rgb, full_range: bool = False):

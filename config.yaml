@@ -56,12 +56,12 @@ detect:
 
 tracks:
   # Filtr statyczny: komórka static_cell_px (z sąsiadami 3×3) w oknie static_window_s jest
-  # „statyczna” (gwiazda, hot piksel), gdy ma ≥ static_min_count trafień rozłożonych na
-  # ≥ static_min_span_s. Warunek czasu chroni wolne obiekty.
+  # „statyczna” (gwiazda, hot piksel), gdy ma ≥ static_min_count trafień w ≥ static_min_seconds
+  # różnych sekundach. Przelatujący obiekt siedzi w komórce 1–2 s, więc zostaje.
   static_cell_px: 4
   static_window_s: 10
   static_min_count: 6
-  static_min_span_s: 4
+  static_min_seconds: 4
   gate_px: 8                 # bramka łączenia: gate_px + gate_speed_frac·|v|·Δklatek
   gate_speed_frac: 0.1
   init_gate_px: 48           # bramka drugiego punktu toru (nieznana prędkość)
