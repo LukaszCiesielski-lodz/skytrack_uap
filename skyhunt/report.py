@@ -356,9 +356,10 @@ def build(outdir: Path, video: Path, meta: VideoMeta, cfg: dict) -> list[str]:
                        ("Szerokość ÷ gwiazda", _fmt(float(t["cross_ratio"]), ".2f")),
                        ("Modulacja jasności", _fmt(float(t["f_peak_hz"]), ".2f", " Hz")
                         + (f" (alias {t['f_alias_hz']:.2f} Hz)" if math.isfinite(float(t["f_alias_hz"])) else ""))]
+            no_st = "bez Space-Track" in str(sync.get("catalog_note", ""))
             notes = [f"Katalog: {sync.get('catalog_note', '')}",
-                     "Niesprawdzone: pełny katalog członów rakiet i śmieci (bez Space-Track), ADS-B (samoloty), "
-                     "druga stacja (paralaksa).",
+                     "Niesprawdzone: " + ("pełny katalog członów rakiet i śmieci (bez Space-Track), " if no_st else "")
+                     + "ADS-B (samoloty), druga stacja (paralaksa).",
                      "Jedna kamera nie daje odległości: brak km/s dla obiektów ostrych."]
             if best:
                 notes.insert(0, f"Najbliższy kandydat katalogowy: NORAD {best['norad']} {best['name']} "

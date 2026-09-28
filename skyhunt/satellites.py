@@ -113,7 +113,10 @@ def fetch_spacetrack(scfg: dict, t_rec: datetime, *, now: datetime | None = None
     """Historia elementów z Space-Track (jedno zapytanie, cache na Drive). Dane logowania
     wyłącznie z ``$SPACETRACK_USER`` / ``$SPACETRACK_PASSWORD``; nigdy nie trafiają do logów."""
     user, pw = os.environ.get("SPACETRACK_USER"), os.environ.get("SPACETRACK_PASSWORD")
-    if str(scfg.get("spacetrack", "auto")) == "off" or not (user and pw):
+    if str(scfg.get("spacetrack", "auto")) == "off":
+        return None
+    if not (user and pw):
+        log.info("Space-Track: brak $SPACETRACK_USER/$SPACETRACK_PASSWORD (komórka Secrets) — tylko CelesTrak")
         return None
     a = (t_rec - timedelta(days=float(scfg["history_days_before"]))).date()
     b = (t_rec + timedelta(days=float(scfg["history_days_after"]) + 1)).date()
