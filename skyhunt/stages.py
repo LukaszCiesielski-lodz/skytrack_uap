@@ -285,14 +285,14 @@ def tle(ctx: StageContext) -> dict:
 
 @PIPELINE.stage("identify", sections=("identify", "classify", "site", "time", "camera", "satellites.ephemeris_dir",
                                       "report.identified_min_confidence"),
-                requires=("tracks", "astrometry", "tle"), rev=1, roles=("sky",))
+                requires=("tracks", "astrometry", "tle"), rev=2, roles=("sky",))
 def identify(ctx: StageContext) -> dict:
     """Synchronizacja zegara po satelitach, identyfikacja NORAD, tabela końcowa torów."""
     import pandas as pd
 
     from .astrometry import load_wcs
     from .satellites import (SIDEREAL_DEG_S, Observer, identify_tracks, load_catalog, make_track_sky,
-                             observer_offset, screen, sunlit_flags, synchronize)
+                             observer_offset, screen, sunlit_at, sunlit_flags, synchronize)
     from .sky import FixedCamera, field_center, radec_to_vec
     from .timing import FrameClock
     from .tracks import classify_hint
@@ -362,8 +362,10 @@ def identify(ctx: StageContext) -> dict:
         u = observer.topocentric([catalog.satrecs[m.cat_index]], m.delta_s + s.tau[sel])["unit"][0]
         pra, pdec = camera.astrometric_radec(u, s.tau[sel], m.delta_s)
         m.pred_radec = np.column_stack([pra, pdec]).tolist()
-    sunlit_flags(catalog, bests, observer, ctx.cfg["satellites"]["ephemeris_dir"],
-                 {s.track_id: s.tau_mid for s in skies})
+    tau_mid = {s.track_id: s.tau_mid for s in skies}
+    eph = sunlit_flags(catalog, bests, observer, ctx.cfg["satellites"]["ephemeris_dir"], tau_mid)
+    sunlit_flags(catalog, sync.members + ([sync.reference] if sync.reference else []), observer, None, tau_mid,
+                 eph=eph)
 
     # tabela końcowa
     from .report import CONF_RANK
@@ -424,11 +426,13 @@ def identify(ctx: StageContext) -> dict:
         for j in np.flatnonzero(inside.any(axis=1)):
             k = np.flatnonzero(inside[j])
             i = int(grid.idx[j])
+            mid = k[len(k) // 2]
             pred_rows.append({"norad": int(catalog.norad[i]), "name": catalog.name[i],
                               "utc_in": (t0 + timedelta(seconds=delta + taus[k[0]])).isoformat(),
                               "utc_out": (t0 + timedelta(seconds=delta + taus[k[-1]])).isoformat(),
-                              "range_km": float(topo["dist_km"][j, k[len(k) // 2]]),
-                              "sunlit": None, "detected": int(catalog.norad[i]) in detected})
+                              "range_km": float(topo["dist_km"][j, mid]),
+                              "sunlit": sunlit_at(catalog, [i], [delta + taus[mid]], observer, eph)[0],
+                              "detected": int(catalog.norad[i]) in detected})
     pd.DataFrame(pred_rows, columns=["norad", "name", "utc_in", "utc_out", "range_km", "sunlit", "detected"]) \
         .to_csv(ctx.outdir / "fov_predicted.csv", index=False)
 

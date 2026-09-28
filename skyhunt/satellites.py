@@ -610,17 +610,40 @@ def identify_tracks(observer: Observer, catalog: Catalog, tracks: list[TrackSky]
     return out
 
 
-def sunlit_flags(catalog: Catalog, matches: list[Match], observer: Observer, ephemeris_dir: str,
-                 taus: dict[int, float]) -> None:
-    """Uzupełnia ``Match.sunlit`` (de421; brak efemerydy → None)."""
+def load_ephemeris(ephemeris_dir: str):
+    """de421 (Słońce, Ziemia) z cache na Drive; brak sieci / pliku → None."""
     try:
-        from skyfield.api import EarthSatellite, Loader
+        from skyfield.api import Loader
 
-        eph = Loader(ephemeris_dir)("de421.bsp")
-    except Exception as e:  # noqa: BLE001 — brak sieci / pliku
+        return Loader(ephemeris_dir)("de421.bsp")
+    except Exception as e:  # noqa: BLE001
         log.warning("oświetlenie satelitów pominięte: %s", e)
-        return
-    for m in matches:
-        sat = EarthSatellite.from_satrec(catalog.satrecs[m.cat_index], observer.ts)
-        t = observer.times([m.delta_s + taus[m.track_id]])
-        m.sunlit = bool(sat.at(t).is_sunlit(eph)[0])
+        return None
+
+
+def sunlit_at(catalog: Catalog, indices, offsets, observer: Observer, eph) -> list:
+    """Czy satelita ``catalog[i]`` był oświetlony przez Słońce w chwili t_ref + offset (None bez efemerydy)."""
+    if eph is None:
+        return [None] * len(indices)
+    from skyfield.api import EarthSatellite
+
+    out = []
+    for i, off in zip(indices, offsets):
+        sat = EarthSatellite.from_satrec(catalog.satrecs[int(i)], observer.ts)
+        out.append(bool(sat.at(observer.times([float(off)])).is_sunlit(eph)[0]))
+    return out
+
+
+def sunlit_flags(catalog: Catalog, matches: list, observer: Observer, ephemeris_dir: str | None,
+                 taus: dict[int, float], eph=None):
+    """Uzupełnia ``sunlit`` dopasowań (obiekty ``Match`` albo słowniki z ``to_dict``); zwraca efemerydę."""
+    eph = eph if eph is not None else load_ephemeris(ephemeris_dir)
+    get = lambda m, k: m[k] if isinstance(m, dict) else getattr(m, k)  # noqa: E731
+    flags = sunlit_at(catalog, [get(m, "cat_index") for m in matches],
+                      [get(m, "delta_s") + taus[get(m, "track_id")] for m in matches], observer, eph)
+    for m, f in zip(matches, flags):
+        if isinstance(m, dict):
+            m["sunlit"] = f
+        else:
+            m.sunlit = f
+    return eph

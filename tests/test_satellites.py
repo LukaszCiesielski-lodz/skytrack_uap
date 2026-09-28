@@ -133,6 +133,24 @@ def test_observer_offset_from_parallax(tmp_path, high_pass):
     assert off["rms_after_arcsec"] < 0.2 * off["rms_before_arcsec"]
 
 
+def test_sunlit_flags_fill_dicts_and_matches(monkeypatch):
+    import skyhunt.satellites as S
+
+    seen = {}
+
+    def fake(catalog, indices, offsets, observer, eph):
+        seen["args"] = (list(indices), list(offsets))
+        return [True, False]
+
+    monkeypatch.setattr(S, "sunlit_at", fake)
+    members = [{"track_id": 1, "cat_index": 5, "delta_s": 2.0}, {"track_id": 2, "cat_index": 7, "delta_s": 2.0}]
+    eph = object()
+    assert S.sunlit_flags(None, members, None, None, {1: 10.0, 2: 20.0}, eph=eph) is eph
+    assert [m["sunlit"] for m in members] == [True, False]
+    assert seen["args"] == ([5, 7], [12.0, 22.0])
+    assert S.sunlit_at(None, [1, 2], [0.0, 1.0], None, None) == [None, None]
+
+
 def test_single_track_gives_low_confidence(tmp_path, high_pass, cfg):
     icfg = cfg["identify"]
     catalog, observer, tracks = build(tmp_path, high_pass, prior_error_s=-20.0)
