@@ -481,7 +481,7 @@ def observer_offset(observer: Observer, catalog: Catalog, members: list, skies: 
             continue
         A.append(-(np.eye(3) - np.outer(u, u)) / dist)
         e.append(s.vec[k] - u)
-    if len(A) < 3:
+    if len(A) < 2:          # tory (każdy daje 2 niezależne równania; niewiadome: 3)
         return None
     A, e = np.vstack(A), np.concatenate(e)
     d, *_ = np.linalg.lstsq(A, e, rcond=None)
