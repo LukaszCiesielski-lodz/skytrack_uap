@@ -1,5 +1,15 @@
 # CHANGELOG
 
+## Weryfikacja i zgłaszanie: oświetlenie, classfd, IOD — 2026-09-28
+
+- **Oświetlenie przez Słońce** jest teraz liczone także dla satelitów synchronizacji (`time_sync.json`) i dla przewidzianych w kadrze (`fov_predicted.csv`, tabela w `summary.pdf`). Wyjaśnia to, dlaczego część przewidzianych nie została wykryta. `identify` rev 2.
+- **Katalog `classfd`** (Mike McCants): satelity spoza publicznych katalogów.
+  - Pobierany jak CelesTrak do `cache/gp/`, konwersja TLE → OMM.
+  - Dla torów bez dopasowania dodatkowe wyszukiwanie z szerszym oknem czasu (`identify.classfd_dt_tol_s`); wynik to kandydat z pewnością `low`.
+  - `tle` rev 2.
+- **Eksport IOD** do `report/iod.txt` (sekcja `iod`) do zgłoszeń w sieci SeeSat-L; `report` rev 2.
+- **Migawka:** `camera.shutter_s: null` oznacza 1/fps z pliku (nowe nagrania: 29,97 kl/s, 1/30 s).
+
 ## Miejsce obserwacji per nagranie, paralaksa satelitów — 2026-09-28
 
 **Przyczyna 0 identyfikacji w DSCF4641 (359 torów):**

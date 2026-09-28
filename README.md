@@ -94,6 +94,20 @@ t[(t.kind == 'unid') & (t.n >= 15)].sort_values('peak_snr_median', ascending=Fal
 
 **Szum.** Tor z `n` ≤ 8, `peak_snr_median` ≈ 5–6 i skokami 25–48 px na klatkę to prawie na pewno przypadkowo połączone detekcje szumu, a nie obiekt. W `DSCF4641` to ~250 z 323 niezidentyfikowanych torów.
 
+### Weryfikacja i zgłaszanie obserwacji
+
+**Sprawdzenie identyfikacji.** W PDF `sat_…` zielony tor (pomiar) powinien pokrywać się z przerywaną predykcją z elementów orbit. W tabeli obok są residuum poprzeczne (kilkadziesiąt ″), δ_j − Δ (< ~1 s), zgodność prędkości i kierunku oraz oświetlenie przez Słońce. Satelita „w cieniu Ziemi” byłby niewidoczny, więc takie dopasowanie jest podejrzane. Niezależnie można to sprawdzić w Stellarium (wtyczka Satellites): wystarczy ustawić miejsce i czas `utc_start` z `tracks_final.csv`.
+
+**Satelity spoza publicznych katalogów.** Poza CelesTrak i Space-Track pipeline pobiera katalog `classfd` (Mike McCants, <https://mmccants.org/tles/>). To elementy satelitów, głównie wojskowych, śledzonych przez amatorską sieć obserwatorów. Elementy bywają sprzed wielu dni, dlatego dopasowanie do nich jest tylko kandydatem z pewnością `low`, widocznym w PDF niezidentyfikowanego obiektu.
+
+**Zgłaszanie.** Space-Track nie przyjmuje obserwacji od amatorów. Pozycje satelitów zgłasza się społeczności obserwatorów (lista SeeSat-L, <https://www.satobs.org>) w formacie IOD. Pipeline zapisuje je w `report/iod.txt`:
+- po 3 pozycje (początek, środek, koniec toru) dla zidentyfikowanych satelitów oraz dla niezidentyfikowanych torów, które są długie, prawie proste i wyraźnie nad szumem (sekcja `iod` w configu);
+- RA/Dec J2000 w formacie 1, niepewność czasu z synchronizacji, niepewność pozycji ze zgodności epok plate solve.
+
+Przed wysłaniem:
+- poproś na SeeSat-L o numer stacji i wpisz go w `iod.station`, bo 9999 oznacza nieprzydzielony;
+- zaznacz w zgłoszeniu, że czas jest kalibrowany na satelitach z katalogu, a nie z GPS.
+
 **Synchronizacja czasu.** Pozycje torów na niebie liczymy z plate solve i modelu nieruchomej kamery: piksel ↔ stały kierunek Alt/Az. Nie zależą one od błędu zegara. Tory proste o prędkościach LEO porównujemy z przelotami z elementów orbit (SGP4) w oknie ±5σ wokół czasu z metadanych, a gdy to nie wystarczy, w ±2 h.
 
 - Poprawka Δ pochodzi z **pierwszego zidentyfikowanego satelity**.
@@ -109,7 +123,7 @@ Dane konstelacji i nazw gwiazd: [d3-celestial](https://github.com/ofrohn/d3-cele
 | | |
 |---|---|
 | Aparat | Fujifilm X-E3, Fujinon XF 50mm F1.0; ostrość ręcznie, tuż przed ∞ |
-| Wideo | 3840×2160, 24000/1001 fps, H.264 w MOV, GOP 24 klatki (1 s), **bez klatek B**, migawka 1/24 s |
+| Wideo | 3840×2160, H.264 w MOV, **bez klatek B**. DSCF4641: 24000/1001 fps, migawka 1/24 s, B&W. Od 28.09.2026: 30000/1001 fps, migawka 1/30 s, ISO auto, kolor (symulacja Standard). fps i czas klatki są czytane z pliku |
 | Miejsce | **osobno dla każdego nagrania**: komórka „Miejsce obserwacji” w notebooku zapisuje je do `MyDrive/skyhunt/sites.yaml` (poza repo). Sekcja `site` w `config.yaml` to tylko wartość domyślna (Łódź). Błąd ~2 km psuje identyfikację satelitów; pipeline ostrzega, gdy paralaksa wskazuje przesunięcie > 0,3 km |
 | `DSCF4641.MOV` | 320 s, start 2026-09-27 18:26:35 UTC (po synchronizacji; zegar aparatu spieszył się o 9 min 33 s); najjaśniejsza gwiazda: Deneb |
 | `dark_frames.MOV` | 320 s, zakryty obiektyw, 2026-09-28 (po korekcie zegara); do FAR i mapy hot pikseli |

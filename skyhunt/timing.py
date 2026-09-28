@@ -59,7 +59,8 @@ class FrameClock:
     def from_config(cls, start_utc: datetime, meta: VideoMeta, camera_cfg: dict, delta_s: float = 0.0):
         off = camera_cfg.get("exposure_offset_s")
         if off is None:
-            off = float(camera_cfg["shutter_s"]) / 2
+            shutter = camera_cfg.get("shutter_s")
+            off = (float(shutter) if shutter else 1.0 / meta.fps) / 2   # brak migawki w configu → 1/fps
         return cls(start_utc, meta.fps, meta.height, float(off), float(camera_cfg.get("rolling_shutter_s") or 0.0),
                    delta_s)
 

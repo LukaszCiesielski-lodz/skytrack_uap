@@ -461,12 +461,25 @@ def identify(ctx: StageContext) -> dict:
                         "predicted_in_fov": len(pred_rows)}}
 
 
-@PIPELINE.stage("report", sections=("report",), requires=("identify",), rev=1, roles=("sky",))
+@PIPELINE.stage("report", sections=("report", "iod", "classify.periodic_min_power"), requires=("identify",), rev=2,
+                roles=("sky",))
 def report(ctx: StageContext) -> dict:
+    import pandas as pd
+
+    from . import iod
     from .report import build
 
     outputs = build(ctx.outdir, ctx.video_path, load_meta(ctx), ctx.cfg)
     pdfs = [o for o in outputs if o.endswith(".pdf")]
-    ctx.log.info("[%s] raport: %d PDF, %d klipów → %s", ctx.video_path.name, len(pdfs), len(outputs) - len(pdfs),
-                 ctx.outdir / "report")
-    return {"outputs": outputs, "metrics": {"pdfs": len(pdfs), "clips": len(outputs) - len(pdfs)}}
+    ctx.log.info("[%s] raport: %d PDF, %d klipów → %s", ctx.video_path.name, len(pdfs),
+                 len([o for o in outputs if o.endswith(".mp4")]), ctx.outdir / "report")
+    icfg = ctx.cfg["iod"]
+    path, n = iod.export(ctx.outdir / "report", pd.read_parquet(ctx.outdir / "tracks_final.parquet"),
+                         pd.read_parquet(ctx.outdir / "track_sky.parquet"), ctx.read_json("time_sync.json"),
+                         ctx.read_json("wcs.json"), ctx.read_json("identifications.json"), icfg, ctx.cfg["classify"])
+    ctx.log.info("[%s] IOD: %d pozycji → %s%s", ctx.video_path.name, n, path,
+                 "  (numer stacji 9999 = nieprzydzielony: ustaw iod.station przed wysłaniem)"
+                 if int(icfg["station"]) == 9999 else "")
+    outputs.append(path.relative_to(ctx.outdir).as_posix())
+    return {"outputs": outputs, "metrics": {"pdfs": len(pdfs), "clips": len([o for o in outputs if o.endswith(".mp4")]),
+                                            "iod_positions": n}}

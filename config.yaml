@@ -16,7 +16,9 @@ camera:
   # Ostrość ustawiona ręcznie „tuż przed nieskończonością”, więc gwiazdy mogą być lekko
   # nieostre. Odległość ostrzenia nieznana; wyznaczymy ją z PSF gwiazd (M4).
   focus_distance_m: null
-  shutter_s: 0.041667      # 1/24 s (aparat: "SS 24"); weryfikacja z długości smug satelitów (M3)
+  # Czas naświetlania klatki; null = 1/fps (X-E3 w wideo: 1/24 s przy 23,98 kl/s, 1/30 s przy 29,97).
+  # Weryfikacja z długości smug satelitów (M3).
+  shutter_s: null
   sensor_width_mm: 23.5
   nominal_hfov_deg: 26.4   # tylko wartość startowa; rzeczywiste pole z plate solve
   exposure_offset_s: null  # czas środka ekspozycji względem znacznika klatki; null = shutter_s/2
@@ -174,6 +176,18 @@ report:
   always_label: []           # gwiazda z astrometry.hint_star jest dodawana automatycznie
   densify_deg: 0.5
   grid_step_deg: 5
+
+iod:
+  # Eksport pozycji w formacie IOD (report/iod.txt) dla amatorskiej sieci obserwatorów
+  # satelitów (SeeSat-L). Numer stacji przydziela społeczność; 9999 = jeszcze nieprzydzielony.
+  station: 9999
+  condition: G               # warunki: E G F P B T
+  unknown_object: "99999 00 000UNK"   # kolumny 1-15 dla obiektu niezidentyfikowanego
+  include_identified: true   # także zidentyfikowane satelity (weryfikacja przez innych)
+  centroid_px: 0.5           # niepewność środka detekcji [px], dodawana do zgodności epok
+  unid_min_points: 15        # niezidentyfikowane: tylko tory dość długie…
+  unid_max_curv_arcsec: 150  # …prawie proste (orbita)…
+  unid_min_snr: 6.0          # …i wyraźnie nad szumem
 
 paths:
   raw_dir: /content/drive/MyDrive/skyhunt/raw
