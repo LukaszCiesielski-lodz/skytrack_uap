@@ -137,6 +137,7 @@ def test_sunlit_flags_fill_dicts_and_matches(monkeypatch):
     import skyhunt.satellites as S
 
     seen = {}
+    real_sunlit_at = S.sunlit_at
 
     def fake(catalog, indices, offsets, observer, eph):
         seen["args"] = (list(indices), list(offsets))
@@ -148,7 +149,7 @@ def test_sunlit_flags_fill_dicts_and_matches(monkeypatch):
     assert S.sunlit_flags(None, members, None, None, {1: 10.0, 2: 20.0}, eph=eph) is eph
     assert [m["sunlit"] for m in members] == [True, False]
     assert seen["args"] == ([5, 7], [12.0, 22.0])
-    assert S.sunlit_at(None, [1, 2], [0.0, 1.0], None, None) == [None, None]
+    assert real_sunlit_at(None, [1, 2], [0.0, 1.0], None, None) == [None, None]
 
 
 def test_single_track_gives_low_confidence(tmp_path, high_pass, cfg):
