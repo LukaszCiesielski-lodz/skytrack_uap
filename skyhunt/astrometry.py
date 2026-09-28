@@ -52,6 +52,19 @@ def ensure_index(acfg: dict, opener: Callable = urllib.request.urlopen) -> Path:
     return d
 
 
+def local_copy(files: list[Path], dest: Path) -> list[Path]:
+    """Kopie plików na dysk lokalny (pomija identyczne rozmiarem). astrometry.net czyta indeksy
+    przez mmap, czego Google Drive zamontowany w Colab nie obsługuje niezawodnie."""
+    dest.mkdir(parents=True, exist_ok=True)
+    out = []
+    for f in files:
+        t = dest / f.name
+        if not t.exists() or t.stat().st_size != f.stat().st_size:
+            shutil.copy2(f, t)
+        out.append(t)
+    return out
+
+
 def write_solver_config(index_dir: Path, path: Path) -> Path:
     path.write_text(f"inparallel\nadd_path {index_dir}\nautoindex\n", encoding="utf-8")
     return path
@@ -81,7 +94,8 @@ def solve_epoch(acfg: dict, image: Path, outdir: Path, config: Path, hint) -> Pa
         wcs = outdir / f"{base}.wcs"
         if (outdir / f"{base}.solved").exists() and wcs.exists():
             return wcs
-        log.warning("solve-field bez rozwiązania (%s): %s", image.name, proc.stdout[-300:].strip())
+        tail = "\n".join((proc.stdout + "\n" + proc.stderr).strip().splitlines()[-25:])
+        log.warning("solve-field bez rozwiązania (%s, kod %s):\n%s", image.name, proc.returncode, tail)
     return None
 
 

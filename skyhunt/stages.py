@@ -103,7 +103,7 @@ def _site(cfg: dict) -> tuple[float, float, float]:
 # ---------------------------------------------------------------- detekcja i tory
 
 @PIPELINE.stage("detect", sections=("decode.exact_luma_required", "decode.torchcodec_full_range", "detect", "role"),
-                requires=("probe",), rev=1)
+                requires=("probe",), rev=2)
 def detect(ctx: StageContext) -> dict:
     """Tło, mapa SNR, komponenty per klatka; stacki epok (tylko nagrania nieba)."""
     import pandas as pd
@@ -126,9 +126,12 @@ def detect(ctx: StageContext) -> dict:
              **star}
     ctx.write_json("detect_stats.json", stats)
     ctx.write_json("epochs.json", res.epochs)
-    ctx.log.info("[%s] detekcja: %d detekcji, %.1f kl/s, σ = %.2f DN, gwiazdy σ = %s px",
-                 ctx.video_path.name, stats["detections"], stats["throughput_fps"], res.sigma_median_dn,
-                 star["star_sigma_px"])
+    ctx.log.info("[%s] detekcja: %d detekcji (mediana %.0f/klatkę), %.1f kl/s, σ = %.2f DN, gwiazdy σ = %s px, "
+                 "odrzucone klatki: %d", ctx.video_path.name, stats["detections"], stats["per_frame_p50"],
+                 stats["throughput_fps"], res.sigma_median_dn, star["star_sigma_px"], len(res.flagged_frames))
+    if res.flagged_frames and len(res.flagged_frames) > 0.1 * max(res.n_frames, 1):
+        ctx.log.warning("[%s] %d/%d klatek odrzuconych (za dużo komponentów) — sprawdź detect.max_components_per_frame",
+                        ctx.video_path.name, len(res.flagged_frames), res.n_frames)
     return {"outputs": ["detections.parquet", "detect_stats.json", "epochs.json"] + [e["file"] for e in res.epochs],
             "metrics": {k: stats[k] for k in ("detections", "per_frame_p50", "throughput_fps", "sigma_median_dn",
                                               "star_sigma_px")} | {"flagged_frames": len(res.flagged_frames)}}
@@ -175,11 +178,11 @@ def darkstats(ctx: StageContext) -> dict:
         c, _ = classify_hint(t["deg_s_nominal"], t["dur_s"], t["curv_px"], t["cross_ratio"], t["f_peak_hz"],
                              t["f_power"], meta.fps, ctx.cfg["classify"])
         classes[c] = classes.get(c, 0) + 1
-    snr = det["peak_snr"] if len(det["peak_snr"]) else np.array([np.nan])
+    snr = det["peak_snr"]
     out = {"file": ctx.video_path.name, "duration_s": duration, "tracks": int(len(tr)),
            "tracks_per_hour": len(tr) / duration * 3600 if duration else float("nan"), "by_class": classes,
            "detections_per_frame": len(det["x"]) / max(n_frames, 1), "hot_pixels": int(len(hot)),
-           "peak_snr_p50_p99": [float(np.nanpercentile(snr, 50)), float(np.nanpercentile(snr, 99))]}
+           "peak_snr_p50_p99": [float(np.percentile(snr, 50)), float(np.percentile(snr, 99))] if len(snr) else None}
     ctx.write_json("darkstats.json", out)
     ctx.log.info("[%s] ciemne: %d fałszywych torów (%.1f/h), %d gorących pikseli", ctx.video_path.name,
                  out["tracks"], out["tracks_per_hour"], out["hot_pixels"])
@@ -192,8 +195,10 @@ def darkstats(ctx: StageContext) -> dict:
                 requires=("detect",), rev=1, roles=("sky",))
 def astrometry(ctx: StageContext) -> dict:
     """Plate solve stacków epok, zgodność epok, rzeczywiste pole widzenia."""
+    import shutil
+
     from .astrometry import (corr_residuals, crop_verdict, ensure_index, epoch_agreement, fov_from_wcs, load_wcs,
-                             solve_epoch, solver_available, write_solver_config)
+                             local_copy, solve_epoch, solver_available, write_solver_config)
     from .sky import FixedCamera, resolve_star
 
     acfg = ctx.cfg["astrometry"]
@@ -202,13 +207,24 @@ def astrometry(ctx: StageContext) -> dict:
         raise RuntimeError("brak solve-field: w notebooku uruchom `apt-get install astrometry.net`")
     adir = ctx.outdir / "astrometry"
     adir.mkdir(exist_ok=True)
-    solver_cfg = write_solver_config(ensure_index(acfg), adir / "solver.cfg")
+    # indeksy i pliki robocze na dysku lokalnym (mmap nie działa niezawodnie na Google Drive)
+    index_dir = ensure_index(acfg)
+    local_index = Path(acfg.get("local_index_dir", "/tmp/skyhunt-astrometry-index"))
+    local_copy(sorted(index_dir.glob("index-*.fits")), local_index)
+    work = Path(acfg.get("work_dir", "/tmp/skyhunt-astrometry")) / ctx.video_path.stem
+    work.mkdir(parents=True, exist_ok=True)
+    solver_cfg = write_solver_config(local_index, work / "solver.cfg")
     hint = resolve_star(acfg["hint_star"]) if acfg.get("hint_star") else None
     results = []
     for e in ctx.read_json("epochs.json"):
-        wcs_path = solve_epoch(acfg, ctx.outdir / e["file"], adir, solver_cfg, hint)
-        entry = {**e, "solved": wcs_path is not None}
-        if wcs_path is not None:
+        image = local_copy([ctx.outdir / e["file"]], work)[0]
+        wcs_local = solve_epoch(acfg, image, work, solver_cfg, hint)
+        entry = {**e, "solved": wcs_local is not None}
+        if wcs_local is not None:
+            for suffix in (".wcs", ".corr"):
+                if wcs_local.with_suffix(suffix).exists():
+                    shutil.copy2(wcs_local.with_suffix(suffix), adir / wcs_local.with_suffix(suffix).name)
+            wcs_path = adir / wcs_local.name
             entry["wcs"] = f"astrometry/{wcs_path.name}"
             corr = wcs_path.with_suffix(".corr")
             if corr.exists():

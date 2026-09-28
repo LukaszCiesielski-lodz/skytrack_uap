@@ -100,12 +100,13 @@ def frame_components(filt: torch.Tensor, snr: torch.Tensor, diff: torch.Tensor, 
                      labeler) -> tuple[np.ndarray, bool]:
     """Komponenty jednej klatki [H, W] → tablica [K, 9] (x, y, flux, sum_snr, peak, npix,
     cxx, cxy, cyy) oraz flaga „za dużo komponentów”. Maska: filt > snr_grow; komponent
-    zostaje, gdy jego maksimum ≥ snr_seed. Wagi momentów: SNR bez filtra (≥0)."""
+    zostaje, gdy jego maksimum ≥ snr_seed. Wagi momentów: SNR bez filtra (≥0).
+
+    Limit ``max_components_per_frame`` dotyczy komponentów z maksimum ≥ snr_seed; samych
+    plamek szumu powyżej snr_grow jest na klatce 4K wiele tysięcy i nie świadczą o chmurach."""
     labels, n = labeler(filt > float(dcfg["snr_grow"]))
     if n == 0:
         return np.empty((0, 9)), False
-    if n > int(dcfg["max_components_per_frame"]):
-        return np.empty((0, 9)), True
     ys, xs = torch.nonzero(labels, as_tuple=True)
     lab = labels[ys, xs] - 1
     dev, dt = filt.device, torch.float64
@@ -122,6 +123,8 @@ def frame_components(filt: torch.Tensor, snr: torch.Tensor, diff: torch.Tensor, 
     peak = torch.full((n,), -math.inf, dtype=dt, device=dev).scatter_reduce_(
         0, lab, filt[ys, xs].to(dt), reduce="amax", include_self=True)
     keep = (peak >= float(dcfg["snr_seed"])) & (npix >= int(dcfg["min_pixels"])) & (sw > 0)
+    if int(keep.sum()) > int(dcfg["max_components_per_frame"]):
+        return np.empty((0, 9)), True
     sw_safe = sw.clamp(min=1e-12)
     x, y = swx / sw_safe, swy / sw_safe
     cxx, cxy, cyy = swxx / sw_safe - x * x, swxy / sw_safe - x * y, swyy / sw_safe - y * y

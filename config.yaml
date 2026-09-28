@@ -96,6 +96,8 @@ astrometry:
   index_dir: /content/drive/MyDrive/skyhunt/cache/astrometry
   index_url: https://data.astrometry.net/4100
   index_series: [4110, 4111, 4112, 4113, 4114, 4115, 4116, 4117, 4118, 4119]
+  local_index_dir: /tmp/skyhunt-astrometry-index   # kopia indeksów na dysku lokalnym (mmap)
+  work_dir: /tmp/skyhunt-astrometry                # pliki robocze solve-field
   scale_low_deg: 12          # szerokość kadru [°] – szeroki zakres, bo crop 4K nieznany
   scale_high_deg: 32
   tweak_order: 3             # SIP: dystorsja f/1.0
