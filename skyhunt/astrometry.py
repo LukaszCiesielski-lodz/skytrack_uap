@@ -87,11 +87,16 @@ def solve_command(acfg: dict, image: Path, outdir: Path, base: str, config: Path
 
 
 def solve_epoch(acfg: dict, image: Path, outdir: Path, config: Path, hint) -> Path | None:
-    """Zwraca ścieżkę .wcs albo None (po próbie z ``downsample`` i ``retry_downsample``)."""
+    """Zwraca ścieżkę .wcs albo None (po próbie z ``downsample`` i ``retry_downsample``;
+    przy podpowiedzi na końcu jeszcze próba bez niej — kamera mogła celować gdzie indziej)."""
     base = image.stem
-    for ds in dict.fromkeys([int(acfg["downsample"]), int(acfg["retry_downsample"])]):
-        cmd = solve_command(acfg, image, outdir, base, config, hint, ds)
-        log.info("solve-field: %s (downsample %d)", image.name, ds)
+    tries = [(ds, hint) for ds in dict.fromkeys([int(acfg["downsample"]), int(acfg["retry_downsample"])])]
+    if hint is not None:
+        tries.append((int(acfg["downsample"]), None))
+    for ds, h in tries:
+        cmd = solve_command(acfg, image, outdir, base, config, h, ds)
+        log.info("solve-field: %s (downsample %d%s)", image.name, ds, "" if h is not None or hint is None
+                 else ", bez podpowiedzi")
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=float(acfg["cpulimit_s"]) + 120)
         wcs = outdir / f"{base}.wcs"
         if (outdir / f"{base}.solved").exists() and wcs.exists():

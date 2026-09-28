@@ -91,7 +91,10 @@ darkstats:
   hot_min_frac: 0.2          # piksel „gorący”, jeśli wykryty w ≥ tej części klatek
 
 astrometry:
-  hint_star: null            # najjaśniejsza gwiazda w kadrze (podpowiedź dla plate solve), per plik
+  # Gwiazda w kadrze (podpowiedź dla plate solve). Deneb: Łabędź jest w zenicie o 20–21 czasu
+  # lokalnego jesienią. Inny kierunek → nadpisanie per plik albo null; przy porażce z podpowiedzią
+  # solve-field i tak próbuje jeszcze bez niej.
+  hint_star: Deneb
   hint_radius_deg: 20        # gwiazda nie musi być w środku kadru
   solve_field: solve-field
   index_dir: /content/drive/MyDrive/skyhunt/cache/astrometry

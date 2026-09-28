@@ -27,6 +27,22 @@ def test_solve_command_has_hint_and_scale(cfg, tmp_path):
     assert f"add_path {tmp_path / 'idx'}" in cfgfile.read_text()
 
 
+def test_solve_epoch_retries_without_hint(cfg, tmp_path, monkeypatch):
+    import subprocess
+    import types
+
+    calls = []
+
+    def fake_run(cmd, **kw):
+        calls.append(cmd)
+        return types.SimpleNamespace(returncode=255, stdout="", stderr="brak rozwiązania")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    a = cfg["astrometry"]
+    assert solve_epoch(a, tmp_path / "e.fits", tmp_path, tmp_path / "s.cfg", resolve_star("Deneb")) is None
+    assert ["--ra" in c for c in calls] == [True, True, False]   # downsample 2, 4 z podpowiedzią, potem bez
+
+
 def test_ensure_index_checks_md5(tmp_path):
     good = b"FITS-A"
     sums = f"{hashlib.md5(good).hexdigest()}  index-4119.fits\n{'0' * 32}  index-4118.fits\n".encode()
