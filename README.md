@@ -47,6 +47,53 @@ Dla każdego nagrania nieba w `out/<plik>/report/`:
 | `objects/unid_t<id>.pdf` | obiekt niezidentyfikowany: tor **na czerwono** na tle gwiazd; prędkość kątowa [°/s], czas przelotu, początek i koniec w UTC (± niepewność poprawki czasu), RA/Dec i Az/Alt, podpowiedź klasy, niesprawdzone hipotezy |
 | `clips/t<id>.mp4` | wycinek ≥ 1 s wokół toru, obiekt zaznaczony okręgiem |
 
+### `tracks_final.csv`: tabela wszystkich torów
+
+Plik jest w `out/<plik>/tracks_final.csv`, jeden wiersz na tor. Obok leży ta sama tabela jako `.parquet`. To najwygodniejsze miejsce, żeby znaleźć konkretny obiekt, zanim otworzysz PDF-y.
+
+**Otwieranie.**
+- Colab: `pandas.read_csv`, przykłady niżej.
+- Arkusze Google / Excel: liczby są zapisane z kropką dziesiętną. Przy polskich ustawieniach regionalnych ustaw najpierw region arkusza na „Stany Zjednoczone” (Arkusze: Plik → Ustawienia) albo importuj z separatorem `,` i ustawieniami angielskimi. Inaczej `0.771` zamieni się w datę albo tekst.
+
+**Najważniejsze kolumny.**
+
+| kolumna | znaczenie |
+|---|---|
+| `track_id` | numer toru, ten sam w nazwach plików: `objects/sat_<NORAD>_t<id>.pdf`, `objects/unid_t<id>.pdf`, `clips/t<id>.mp4` |
+| `kind` | `sat` (zidentyfikowany satelita) albo `unid` (niezidentyfikowany) |
+| `norad`, `sat_name`, `confidence`, `match_reason` | identyfikacja: numer NORAD, nazwa, pewność (`high`/`medium`/`low`), uzasadnienie |
+| `tau0`, `tau1`, `dur_s` | początek i koniec w sekundach od startu filmu (≈ licznik odtwarzacza) oraz czas trwania |
+| `utc_start`, `utc_end` | początek i koniec w UTC, już po poprawce zegara z satelitów |
+| `omega_deg_s` | prędkość kątowa [°/s]; LEO nad głową to ~0,5–1,1 °/s |
+| `curv_arcsec` | odchylenie toru od koła wielkiego [″]; satelity zwykle < 20″ |
+| `ra0`, `dec0`, `ra1`, `dec1` / `az0`, `alt0`, `az1`, `alt1` | położenie na niebie na początku i końcu toru (RA/Dec ICRS oraz azymut i wysokość) |
+| `n` | liczba punktów toru (klatek z detekcją) |
+| `peak_snr_median` | jasność jako SNR; próg wykrycia to 5, wyraźne obiekty > 15, prześwietlone > 50 |
+| `speed_px_frame`, `x0`, `y0`, `x1`, `y1` | ruch i położenie w pikselach (kadr 3840×2160) |
+| `cross_ratio` | szerokość obiektu ÷ szerokość gwiazdy; > 1,8 znaczy nieostry (bliski), chyba że obiekt jest bardzo jasny |
+| `f_peak_hz`, `f_alias_hz`, `f_power` | modulacja jasności (błyski, obrót); przy 24 kl/s nie da się odróżnić `f_peak_hz` od `f_alias_hz` |
+| `starts_inside`, `ends_inside` | `False` oznacza, że obiekt wlatuje lub wylatuje przez krawędź kadru; `True` na końcu toru oznacza, że gaśnie w kadrze (np. wejście w cień Ziemi) |
+| `class_hint`, `class_reason` | podpowiedź klasy dla niezidentyfikowanych: `satelita?`, `meteor?`, `samolot?`, `bliski obiekt?` |
+
+**Przykłady (komórka w Colab).**
+
+```python
+import pandas as pd
+t = pd.read_csv(f'{OUT}/DSCF4641/tracks_final.csv')
+
+# zidentyfikowane satelity w kolejności pojawienia się
+t[t.kind == 'sat'].sort_values('tau0')[['track_id', 'tau0', 'utc_start', 'norad', 'sat_name', 'omega_deg_s']]
+
+# co było w kadrze w 43. sekundzie filmu
+T = 43
+t[(t.tau0 <= T + 2) & (t.tau1 >= T - 2)]
+
+# niezidentyfikowane warte obejrzenia: dłuższe tory, najjaśniejsze na górze
+t[(t.kind == 'unid') & (t.n >= 15)].sort_values('peak_snr_median', ascending=False)
+```
+
+**Szum.** Tor z `n` ≤ 8, `peak_snr_median` ≈ 5–6 i skokami 25–48 px na klatkę to prawie na pewno przypadkowo połączone detekcje szumu, a nie obiekt. W `DSCF4641` to ~250 z 323 niezidentyfikowanych torów.
+
 **Synchronizacja czasu.** Pozycje torów na niebie liczymy z plate solve i modelu nieruchomej kamery: piksel ↔ stały kierunek Alt/Az. Nie zależą one od błędu zegara. Tory proste o prędkościach LEO porównujemy z przelotami z elementów orbit (SGP4) w oknie ±5σ wokół czasu z metadanych, a gdy to nie wystarczy, w ±2 h.
 
 - Poprawka Δ pochodzi z **pierwszego zidentyfikowanego satelity**.
