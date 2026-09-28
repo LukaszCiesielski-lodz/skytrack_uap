@@ -134,7 +134,16 @@ def cmd_status(args, cfg) -> int:
         stages = read_json(mpath).get("stages", {})
         summary = ", ".join(f"{k}={v.get('status')}" for k, v in stages.items()) or "brak etapów"
         print(f"{f.name}: {summary}")
+        for k, v in stages.items():   # liczby z etapów (zamiast przewijania długiego logu)
+            m = v.get("metrics") or {}
+            if m:
+                print(f"    {k:11s} " + ", ".join(f"{a}={_fmt_metric(b)}" for a, b in m.items()
+                                                  if not isinstance(b, (list, dict))))
     return 0
+
+
+def _fmt_metric(v) -> str:
+    return f"{v:.4g}" if isinstance(v, float) else str(v)
 
 
 def main(argv: list[str] | None = None) -> int:
