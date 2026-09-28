@@ -63,13 +63,30 @@ def test_periodicity_and_alias(cfg):
     assert FPS - f == pytest.approx(18.8, abs=0.26)
 
 
+def test_kinematics_straight_vs_turning():
+    from skyhunt.tracks import kinematics
+
+    f = np.arange(0, 120)
+    k = kinematics(f, 100 + 5.0 * f, 200 + 2.0 * f, FPS)                       # jednostajny, prosty
+    assert k["accel_px_s2"] < 1e-6 and k["speed_cv"] < 1e-6 and k["turn_deg"] < 1e-6
+    ang = np.radians(90 * f / f[-1])                                          # skręt o 90° ze stałą prędkością
+    xs, ys = np.cumsum(5 * np.cos(ang)), np.cumsum(5 * np.sin(ang))
+    k = kinematics(f, xs, ys, FPS)
+    assert 70 < k["turn_deg"] < 95 and k["speed_cv"] < 0.05 and k["accel_px_s2"] > 10
+    t = f / FPS                                                               # hamowanie
+    k = kinematics(f, 300 * t - 40 * t ** 2, 0 * t, FPS)
+    assert k["accel_px_s2"] == pytest.approx(80, rel=0.01) and k["speed_cv"] > 0.1
+
+
 def test_classify_hint(cfg):
     c = cfg["classify"]
     assert classify_hint(4.0, 0.8, 1.0, 1.0, np.nan, 0, FPS, c)[0] == "meteor?"
     assert classify_hint(0.9, 6.0, 0.5, 1.0, np.nan, 0, FPS, c)[0] == "satelita?"
     assert classify_hint(0.5, 10.0, 0.5, 1.0, 1.0, 20, FPS, c)[0] == "samolot?"
-    label, reason = classify_hint(4.4, 3.0, 26.0, 2.2, 5.2, 20, FPS, c)
-    assert label == "bliski obiekt?" and "18.8" in reason and "nieostry" in reason
+    label, reason = classify_hint(4.4, 3.0, 26.0, 2.2, 5.2, 20, FPS, c)       # jak tor #69 z DSCF4641
+    assert label == "ptak?" and "18.8" in reason and "nieostry" in reason
+    # bez istotnej modulacji (moc 3 jak u satelitów) zakrzywiony tor to nie „ptak?”
+    assert classify_hint(3.4, 6.0, 20.8, 1.6, 11.2, 3.2, FPS, c)[0] == "bliski obiekt?"
     # tor #58 z DSCF4641 (STARLINK-2112): prosty, 0,77°/s, szeroki tylko przez prześwietlenie
     assert classify_hint(0.77, 7.8, 0.5, 2.46, 5.0, 3, FPS, c)[0] == "bliski obiekt?"
     assert classify_hint(0.77, 7.8, 0.5, 2.46, 5.0, 3, FPS, c, peak_snr=200.0)[0] == "satelita?"

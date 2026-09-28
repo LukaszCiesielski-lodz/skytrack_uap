@@ -277,6 +277,11 @@ def build(outdir: Path, video: Path, meta: VideoMeta, cfg: dict) -> list[str]:
     ident = read_json(outdir / "identifications.json")
     wcsinfo = read_json(outdir / "wcs.json")
     pred = pd.read_csv(outdir / "fov_predicted.csv") if (outdir / "fov_predicted.csv").exists() else pd.DataFrame()
+    air_path, air_src = outdir / "adsb_matches.csv", outdir / "adsb_source.json"
+    air = {int(r["track_id"]): r for _, r in pd.read_csv(air_path).iterrows()} if air_path.exists() else {}
+    adsb_info = read_json(air_src) if air_src.exists() else {}
+    adsb_checked = bool(adsb_info.get("enabled")) and "error" not in adsb_info
+    periodic_min = float(cfg.get("classify", {}).get("periodic_min_power", 6.0))
     hint = cfg.get("astrometry", {}).get("hint_star")
     always = list(rcfg.get("always_label") or []) + ([hint] if hint else [])
     start = datetime.fromisoformat(sync["start_utc_prior"])
@@ -350,21 +355,38 @@ def build(outdir: Path, video: Path, meta: VideoMeta, cfg: dict) -> list[str]:
             notes = [best.get("reason", "")]
             name = f"sat_{best['norad']}_t{tid}"
         else:
-            title = f"Obiekt niezidentyfikowany — tor #{tid}  ({t['class_hint']})"
-            params += [("Podpowiedź klasy", str(t["class_hint"])),
+            a = air.get(tid)
+            f_pow = float(t.get("f_power", float("nan")))
+            modulation = (_fmt(float(t["f_peak_hz"]), ".2f", " Hz")
+                          + (f" lub alias {t['f_alias_hz']:.2f} Hz" if math.isfinite(float(t["f_alias_hz"])) else "")
+                          + f" (moc {f_pow:.1f})") if f_pow > periodic_min else f"brak istotnej (moc {f_pow:.1f})"
+            hint = "samolot (ADS-B)" if a is not None else str(t["class_hint"])
+            title = (f"Samolot (ADS-B) — tor #{tid}" if a is not None
+                     else f"Obiekt niezidentyfikowany — tor #{tid}  ({hint})")
+            params += [("Podpowiedź klasy", hint),
                        ("Uzasadnienie", str(t["class_reason"])[:60]),
                        ("Szerokość ÷ gwiazda", _fmt(float(t["cross_ratio"]), ".2f")),
-                       ("Modulacja jasności", _fmt(float(t["f_peak_hz"]), ".2f", " Hz")
-                        + (f" (alias {t['f_alias_hz']:.2f} Hz)" if math.isfinite(float(t["f_alias_hz"])) else ""))]
+                       ("Modulacja jasności", modulation),
+                       ("Przyspieszenie", _fmt(float(t.get("accel_deg_s2", float("nan"))), ".3f", " °/s²")),
+                       ("Zmiana kierunku / zmienność v", f"{_fmt(float(t.get('turn_deg', float('nan'))), '.1f', '°')} / "
+                                                         f"{_fmt(float(t.get('speed_cv', float('nan'))) * 100, '.0f', '%')}")]
+            if a is not None:
+                params += [("Samolot", " ".join(str(v) for v in (a["reg"], a["type"], a["callsign"])
+                                                if isinstance(v, str) and v) or str(a["icao"])),
+                           ("ICAO / wysokość / odległość", f"{a['icao']} / {a['alt_m']:.0f} m / {a['range_km']:.1f} km"),
+                           ("Odchylenie od trasy ADS-B", f"{a['sep_deg']:.2f}°")]
             no_st = "bez Space-Track" in str(sync.get("catalog_note", ""))
+            unchecked = (["pełny katalog członów rakiet i śmieci (bez Space-Track)"] if no_st else []) \
+                + ([] if adsb_checked else ["ADS-B (samoloty)"]) + ["druga stacja (paralaksa)"]
             notes = [f"Katalog: {sync.get('catalog_note', '')}",
-                     "Niesprawdzone: " + ("pełny katalog członów rakiet i śmieci (bez Space-Track), " if no_st else "")
-                     + "ADS-B (samoloty), druga stacja (paralaksa).",
+                     f"ADS-B: {adsb_info.get('source', 'adsb.lol')}, {adsb_info.get('n_aircraft', 0)} samolotów w pobliżu"
+                     if adsb_checked else "ADS-B: niesprawdzone",
+                     "Niesprawdzone: " + ", ".join(unchecked) + ".",
                      "Jedna kamera nie daje odległości: brak km/s dla obiektów ostrych."]
             if best:
                 notes.insert(0, f"Najbliższy kandydat katalogowy: NORAD {best['norad']} {best['name']} "
                                 f"(pewność {best.get('confidence') or 'poniżej progu'})")
-            name = f"unid_t{tid}"
+            name = f"air_{a['icao']}_t{tid}" if a is not None else f"unid_t{tid}"
         obj.update(title=title, params=params, notes=notes)
 
         # klip i pasek klatek
@@ -427,7 +449,8 @@ def build(outdir: Path, video: Path, meta: VideoMeta, cfg: dict) -> list[str]:
                      f"{t['dur_s']:.2f}", f"{t['omega_deg_s']:.3f}",
                      f"{t['az0']:.1f}/{t['alt0']:.1f}", f"{t['az1']:.1f}/{t['alt1']:.1f}",
                      f"{b['norad']} {b['name'][:18]}" if b else "–",
-                     (b or {}).get("confidence") or "–", t["class_hint"] if not b else ""])
+                     (b or {}).get("confidence") or "–",
+                     "" if b else ("samolot (ADS-B)" if int(t["track_id"]) in air else t["class_hint"])])
     pred_rows = []
     if len(pred):
         for _, p in pred[~pred["detected"].astype(bool)].iterrows():

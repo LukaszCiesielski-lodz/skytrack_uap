@@ -197,6 +197,34 @@ def periodicity(frames: np.ndarray, flux: np.ndarray, fps: float, tcfg: dict) ->
     return float(freq[j]), float(spec[j] / (np.median(spec[spec > 0]) + 1e-9))
 
 
+def kinematics(frames: np.ndarray, x: np.ndarray, y: np.ndarray, fps: float, segment_s: float = 0.5) -> dict:
+    """Ruch toru w pikselach: przyspieszenie z dopasowania paraboli [px/s²], zmienność prędkości
+    między odcinkami ~``segment_s``, całkowita zmiana kierunku [°] i największe tempo skrętu [°/s].
+    Satelita: przyspieszenie ≈ 0, prędkość stała, kierunek stały; ptak/owad/dron: zmiany."""
+    t = frames.astype(float) / fps
+    out = {"accel_px_s2": float("nan"), "speed_cv": float("nan"), "turn_deg": float("nan"),
+           "turn_rate_deg_s": float("nan")}
+    if len(t) >= 8 and np.ptp(t) > 0:
+        ax, ay = np.polyfit(t, x, 2)[0], np.polyfit(t, y, 2)[0]
+        out["accel_px_s2"] = float(2 * np.hypot(ax, ay))
+    edges = np.arange(t[0], t[-1] + 1e-9, segment_s)
+    vel, mids = [], []
+    for a in edges:
+        m = (t >= a) & (t < a + segment_s)
+        if m.sum() >= 3 and np.ptp(t[m]) > 0:
+            vel.append((np.polyfit(t[m], x[m], 1)[0], np.polyfit(t[m], y[m], 1)[0]))
+            mids.append(float(np.mean(t[m])))
+    if len(vel) >= 2:
+        v = np.asarray(vel)
+        speed = np.hypot(v[:, 0], v[:, 1])
+        out["speed_cv"] = float(np.std(speed) / (np.mean(speed) + 1e-9))
+        ang = np.unwrap(np.arctan2(v[:, 1], v[:, 0]))
+        out["turn_deg"] = float(np.degrees(abs(ang[-1] - ang[0])))
+        rate = np.abs(np.diff(ang)) / np.maximum(np.diff(mids), 1e-6)
+        out["turn_rate_deg_s"] = float(np.degrees(rate.max()))
+    return out
+
+
 def measure_track(frames, x, y, flux, cxx, cxy, cyy, *, fps: float, width: int, height: int,
                   star_sigma_px: float | None, nominal_hfov_deg: float, tcfg: dict) -> dict:
     fr = frames.astype(float)
@@ -224,6 +252,7 @@ def measure_track(frames, x, y, flux, cxx, cxy, cyy, *, fps: float, width: int, 
         "f_peak_hz": f_peak, "f_power": f_power,
         "f_alias_hz": float(fps - f_peak) if math.isfinite(f_peak) else float("nan"),
         "starts_inside": inside(x[0], y[0]), "ends_inside": inside(x[-1], y[-1]),
+        **kinematics(np.asarray(frames), np.asarray(x, float), np.asarray(y, float), fps),
     }
 
 
@@ -241,6 +270,12 @@ def classify_hint(deg_s: float, dur_s: float, curv_px: float, cross_ratio: float
         return "meteor?", f"szybki ({deg_s:.2f}°/s), krótki ({dur_s:.2f} s), prosty"
     if periodic and a_lo <= f_peak_hz <= a_hi and deg_s < float(ccfg["meteor_min_deg_s"]):
         return "samolot?", f"błyski {f_peak_hz:.2f} Hz (światła stroboskopowe)"
+    b_lo, b_hi = ccfg.get("bird_f_hz", (math.inf, math.inf))
+    v_lo, v_hi = ccfg.get("bird_deg_s", (math.inf, math.inf))
+    if periodic and b_lo <= f_peak_hz <= b_hi and v_lo <= deg_s <= v_hi:
+        return "ptak?", (f"machanie skrzydłami {f_peak_hz:.1f} Hz lub alias {fps - f_peak_hz:.1f} Hz "
+                         f"(moc {f_power:.0f}), {deg_s:.1f}°/s"
+                         + (f", nieostry {cross_ratio:.1f}× gwiazdy" if near else ""))
     if near or (periodic and f_peak_hz > a_hi) or not straight:
         why = []
         if near:

@@ -137,7 +137,7 @@ def detect(ctx: StageContext) -> dict:
                                               "star_sigma_px")} | {"flagged_frames": len(res.flagged_frames)}}
 
 
-@PIPELINE.stage("tracks", sections=("tracks", "camera.nominal_hfov_deg"), requires=("detect",), rev=1)
+@PIPELINE.stage("tracks", sections=("tracks", "camera.nominal_hfov_deg"), requires=("detect",), rev=2)
 def tracks(ctx: StageContext) -> dict:
     import pandas as pd
 
@@ -377,6 +377,7 @@ def identify(ctx: StageContext) -> dict:
 
     min_rank = CONF_RANK[str(ctx.cfg["report"]["identified_min_confidence"])]
     cam_sync = camera.with_reference(t0 + timedelta(seconds=delta))
+    scale_deg_px = float((wcsinfo.get("fov") or {}).get("scale_arcsec_px") or float("nan")) / 3600
     rows = []
     for _, t in tr.iterrows():
         tid = int(t["track_id"])
@@ -392,6 +393,7 @@ def identify(ctx: StageContext) -> dict:
         kind = "sat" if best is not None and CONF_RANK.get(best.confidence, 0) >= min_rank else "unid"
         rows.append({
             **t.to_dict(), "kind": kind, "class_hint": hint, "class_reason": reason, "peak_snr_median": peak,
+            "accel_deg_s2": float(t.get("accel_px_s2", float("nan"))) * scale_deg_px,
             "tau0": float(s.tau[0]), "tau1": float(s.tau[-1]), "tau_mid": s.tau_mid,
             "utc_start": (t0 + timedelta(seconds=float(s.tau[0]) + delta)).isoformat(),
             "utc_end": (t0 + timedelta(seconds=float(s.tau[-1]) + delta)).isoformat(),
@@ -461,8 +463,63 @@ def identify(ctx: StageContext) -> dict:
                         "predicted_in_fov": len(pred_rows)}}
 
 
-@PIPELINE.stage("report", sections=("report", "iod", "classify.periodic_min_power"), requires=("identify",), rev=2,
-                roles=("sky",))
+@PIPELINE.stage("adsb", sections=("adsb", "site"), requires=("identify",), rev=1, roles=("sky",))
+def adsb(ctx: StageContext) -> dict:
+    """Niezidentyfikowane tory vs trasy samolotów z historii ADS-B (adsb.lol)."""
+    import pandas as pd
+
+    from . import adsb as A
+    from .astrometry import load_wcs
+    from .sky import FixedCamera
+
+    acfg, site = ctx.cfg["adsb"], _site(ctx.cfg)
+    meta, sync = load_meta(ctx), ctx.read_json("time_sync.json")
+    start = datetime.fromisoformat(sync["start_utc_prior"]) + timedelta(seconds=float(sync["delta_s"]))
+    end = start + timedelta(seconds=meta.n_frames / meta.fps)
+    info: dict = {"enabled": str(acfg.get("enabled", "auto")) != "off", "source": "adsb.lol (ODbL 1.0)",
+                  "synced": bool(sync.get("synced")), "sources": []}
+    matches: list[dict] = []
+    if info["enabled"]:
+        try:
+            parts = []
+            for day in A.recording_days(start - timedelta(minutes=5), end + timedelta(minutes=5)):
+                df, src = A.day_points(acfg, day, site)
+                parts.append(df)
+                info["sources"].append(src)
+            points = pd.concat(parts, ignore_index=True)
+            lo, hi = start.timestamp() - 300, end.timestamp() + 300
+            points = points[(points["t"] >= lo) & (points["t"] <= hi)]
+            info["n_aircraft"] = int(points["icao"].nunique())
+            wcsinfo = ctx.read_json("wcs.json")
+            cam = FixedCamera(load_wcs(ctx.outdir / wcsinfo["reference_wcs"]), wcsinfo["reference_tau_s"], start, *site)
+            final = pd.read_parquet(ctx.outdir / "tracks_final.parquet")
+            pts = pd.read_parquet(ctx.outdir / "track_sky.parquet")
+            trs = []
+            for tid in final.loc[final["kind"] != "sat", "track_id"].astype(int):
+                p = pts[pts["track_id"] == tid].sort_values("frame")
+                p = p.iloc[np.unique(np.linspace(0, len(p) - 1, min(len(p), 20)).astype(int))]
+                az, alt = cam.altaz(p["x"].to_numpy(), p["y"].to_numpy())
+                trs.append({"track_id": tid, "times": start.timestamp() + p["tau"].to_numpy(float),
+                            "enu": A.altaz_to_enu(az, alt)})
+            matches = A.match_tracks(trs, points, site, acfg) if len(points) else []
+        except Exception as e:  # noqa: BLE001 — brak ADS-B nie blokuje raportu
+            info["error"] = str(e)
+            ctx.log.warning("[%s] ADS-B niedostępne: %s", ctx.video_path.name, e)
+    cols = ["track_id", "icao", "reg", "type", "callsign", "sep_deg", "range_km", "alt_m"]
+    pd.DataFrame(matches, columns=cols).to_csv(ctx.outdir / "adsb_matches.csv", index=False)
+    info["n_matched"] = len(matches)
+    ctx.write_json("adsb_source.json", info)
+    if info["enabled"] and "error" not in info:
+        ctx.log.info("[%s] ADS-B: %d samolotów w promieniu %.0f km, tory samolotów: %s", ctx.video_path.name,
+                     info.get("n_aircraft", 0), float(acfg["radius_km"]),
+                     ", ".join(f"#{m['track_id']} {m['reg'] or m['icao']} ({m['alt_m']:.0f} m)" for m in matches) or "brak")
+    return {"outputs": ["adsb_matches.csv", "adsb_source.json"],
+            "metrics": {"aircraft_nearby": info.get("n_aircraft"), "aircraft_tracks": len(matches),
+                        "adsb_error": "error" in info}}
+
+
+@PIPELINE.stage("report", sections=("report", "iod", "classify.periodic_min_power"), requires=("identify", "adsb"),
+                rev=2, roles=("sky",))
 def report(ctx: StageContext) -> dict:
     import pandas as pd
 
@@ -474,7 +531,11 @@ def report(ctx: StageContext) -> dict:
     ctx.log.info("[%s] raport: %d PDF, %d klipów → %s", ctx.video_path.name, len(pdfs),
                  len([o for o in outputs if o.endswith(".mp4")]), ctx.outdir / "report")
     icfg = ctx.cfg["iod"]
-    path, n = iod.export(ctx.outdir / "report", pd.read_parquet(ctx.outdir / "tracks_final.parquet"),
+    final = pd.read_parquet(ctx.outdir / "tracks_final.parquet")
+    air = ctx.outdir / "adsb_matches.csv"
+    if air.exists():                                   # samoloty z ADS-B nie idą do zgłoszeń satelitarnych
+        final = final[~final["track_id"].isin(pd.read_csv(air)["track_id"])]
+    path, n = iod.export(ctx.outdir / "report", final,
                          pd.read_parquet(ctx.outdir / "track_sky.parquet"), ctx.read_json("time_sync.json"),
                          ctx.read_json("wcs.json"), ctx.read_json("identifications.json"), icfg, ctx.cfg["classify"])
     ctx.log.info("[%s] IOD: %d pozycji → %s%s", ctx.video_path.name, n, path,

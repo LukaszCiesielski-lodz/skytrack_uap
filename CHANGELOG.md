@@ -1,5 +1,18 @@
 # CHANGELOG
 
+## Samoloty z ADS-B, ruch toru, „ptak?” — 2026-09-29
+
+- **Etap `adsb`:** niezidentyfikowane tory są porównywane z trasami samolotów z historii ADS-B.
+  - Źródło: adsb.lol, licencja ODbL. OpenSky REST daje tylko ostatnią godzinę, więc do starszych nagrań się nie nadaje.
+  - Archiwum dnia (kilka GB, podzielony tar) jest czytane strumieniowo. W `cache/adsb/` na Drive zostają tylko punkty w promieniu 150 km.
+  - Dopasowanie: mediana odległości kątowej tor ↔ trasa ≤ 1,5°.
+  - Wynik: `adsb_matches.csv` i PDF `air_<ICAO>_t<id>.pdf` (rejestracja, typ, lot, wysokość, odległość). Samoloty nie trafiają do `iod.txt`.
+- **Ruch toru** (`tracks` rev 2): przyspieszenie z paraboli, zmienność prędkości między odcinkami 0,5 s, całkowita zmiana kierunku i największe tempo skrętu. W `tracks_final` jako `accel_deg_s2`, `speed_cv`, `turn_deg`, `turn_rate_deg_s`; w PDF niezidentyfikowanych.
+- **„ptak?”:** istotna modulacja jasności w paśmie 2–15 Hz przy 0,5–20 °/s.
+  - W DSCF4641 moc modulacji ≈ 3 ma prawie każdy tor, także satelity, więc to szum.
+  - Istotną modulację (moc 19, 5,25 Hz) ma tylko #69.
+  - PDF pokazuje teraz „brak istotnej (moc …)”, zamiast częstotliwości szumu.
+
 ## Weryfikacja i zgłaszanie: oświetlenie, classfd, IOD — 2026-09-28
 
 - **Oświetlenie przez Słońce** jest teraz liczone także dla satelitów synchronizacji (`time_sync.json`) i dla przewidzianych w kadrze (`fov_predicted.csv`, tabela w `summary.pdf`). Wyjaśnia to, dlaczego część przewidzianych nie została wykryta. `identify` rev 2.
