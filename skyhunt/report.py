@@ -271,6 +271,9 @@ def build(outdir: Path, video: Path, meta: VideoMeta, cfg: dict) -> list[str]:
     rep = outdir / "report"
     (rep / "objects").mkdir(parents=True, exist_ok=True)
     (rep / "clips").mkdir(parents=True, exist_ok=True)
+    # numery torów zmieniają się po przeliczeniu etapu tracks: stare PDF-y i klipy by myliły
+    for old in [*(rep / "objects").glob("*_t*.pdf"), *(rep / "clips").glob("t*.mp4")]:
+        old.unlink()
     tracks = pd.read_parquet(outdir / "tracks_final.parquet")
     pts = pd.read_parquet(outdir / "track_sky.parquet")
     sync = read_json(outdir / "time_sync.json")

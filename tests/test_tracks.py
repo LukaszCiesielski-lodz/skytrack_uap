@@ -55,6 +55,27 @@ def test_build_tracks(cfg):
     assert stats["static"] > 200
 
 
+def test_weak_short_dropped_and_long_gap_merged(cfg):
+    rows = []
+    for f in range(10, 17):                    # A: 7 kropek SNR 5,5 — łańcuch szumu
+        rows.append((f, 100 + 5 * f, 100, 5.5))
+    for f in range(30, 42):                    # B: słaby, ale 12 punktów — zostaje
+        rows.append((f, 400 + 5 * (f - 30), 300, 6.0))
+    for f in range(60, 66):                    # C: krótki, ale jasny (meteor/błysk) — zostaje
+        rows.append((f, 700 + 5 * (f - 60), 500, 20.0))
+    for f in [*range(100, 150), *range(190, 240)]:   # D: jasny, przerwa 40 klatek (jak tor #9)
+        rows.append((f, 100 + 3 * (f - 100), 600 + (f - 100), 50.0))
+    a = np.array(rows, float)
+    n = len(a)
+    det = {"frame": a[:, 0].astype(np.int64), "x": a[:, 1], "y": a[:, 2], "flux": np.full(n, 100.0),
+           "sum_snr": a[:, 3] * 3, "peak_snr": a[:, 3], "npix": np.full(n, 9.0),
+           "cxx": np.ones(n), "cxy": np.zeros(n), "cyy": np.ones(n)}
+    out, _, stats = build_tracks(det, fps=30.0, width=1280, height=800, star_sigma_px=1.0,
+                                 nominal_hfov_deg=26.4, tcfg=cfg["tracks"])
+    assert sorted((r["frame0"], r["n"]) for r in out) == [(30, 12), (60, 6), (100, 100)]
+    assert stats["weak_dropped"] == 1
+
+
 def test_periodicity_and_alias(cfg):
     frames = np.arange(96)
     flux = 100 + 30 * np.sin(2 * np.pi * 5.2 * frames / FPS)

@@ -70,8 +70,12 @@ tracks:
   max_gap_frames: 3
   min_len: 6
   min_disp_px: 20
+  # Łańcuchy kropek szumu: tor krótszy niż weak_min_len punktów I z medianą SNR maksimum
+  # poniżej weak_snr jest odrzucany (po sklejeniu fragmentów). Krótkie jasne tory zostają.
+  weak_min_len: 10
+  weak_snr: 7.0
   merge_gate_px: 15          # sklejanie fragmentów toru
-  merge_gap_frames: 24
+  merge_gap_frames: 60       # ~2 s: jasne obiekty bywają pocięte przerwami 1–1,6 s
   merge_angle_deg: 5
   edge_margin_px: 20         # tor zaczyna/kończy się „na krawędzi”, jeśli bliżej brzegu
   fft_min_frames: 24

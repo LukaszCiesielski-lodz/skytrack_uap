@@ -1,5 +1,15 @@
 # CHANGELOG
 
+## Mniej fałszywych torów, sklejanie pociętych — 2026-09-29
+
+- **Odrzucanie łańcuchów szumu** (`tracks.weak_min_len: 10`, `tracks.weak_snr: 7`): tor krótszy niż 10 punktów i zarazem z medianą SNR maksimum < 7 jest odrzucany.
+  - DSCF4647: tak wyglądało 301 z 334 torów bez dopasowania; DSCF4648: 260 z 286.
+  - Wśród 189 zidentyfikowanych satelitów obu części nie było żadnego takiego toru (najsłabszy: 10 punktów, SNR 6,4).
+  - Krótkie jasne tory (meteory, błyski) i długie słabe zostają.
+- **Sklejanie fragmentów** do 60 klatek przerwy (było 24). Jasny obiekt #9 w DSCF4647 był pocięty na 4 tory (#9, #19, #23, #27) przerwami 33–48 klatek.
+- **Raport** usuwa stare PDF-y i klipy przed wygenerowaniem nowych (numery torów się zmieniają).
+- `tracks` rev 3: przeliczy się `tracks`, `identify`, `adsb`, `report` (bez ponownej detekcji).
+
 ## Samoloty z ADS-B, ruch toru, „ptak?” — 2026-09-29
 
 - **Etap `adsb`:** niezidentyfikowane tory są porównywane z trasami samolotów z historii ADS-B.

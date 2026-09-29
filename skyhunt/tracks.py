@@ -177,6 +177,17 @@ def merge_fragments(tracks: list[np.ndarray], frame, x, y, tcfg: dict) -> list[n
     return tracks
 
 
+def drop_weak(tracks: list[np.ndarray], peak_snr: np.ndarray | None, tcfg: dict) -> list[np.ndarray]:
+    """Odrzuca tory krótkie (< ``weak_min_len`` punktów) i zarazem słabe (mediana SNR maksimum
+    < ``weak_snr``): to łańcuchy przypadkowych kropek szumu. W DSCF4647/4648 taki był ~90%
+    torów bez dopasowania i żaden zidentyfikowany satelita (najsłabszy: 10 punktów przy SNR 6,4).
+    Krótkie jasne (meteor, błysk) i długie słabe tory zostają."""
+    min_len, snr = int(tcfg.get("weak_min_len", 0)), float(tcfg.get("weak_snr", 0.0))
+    if peak_snr is None or min_len <= 0:
+        return tracks
+    return [t for t in tracks if len(t) >= min_len or float(np.median(peak_snr[t])) >= snr]
+
+
 # ---------------------------------------------------------------- pomiary
 
 def periodicity(frames: np.ndarray, flux: np.ndarray, fps: float, tcfg: dict) -> tuple[float, float]:
@@ -299,6 +310,8 @@ def build_tracks(det: dict, *, fps: float, width: int, height: int, star_sigma_p
     tracks = link(frame[keep], x[keep], y[keep], tcfg)
     tracks = [keep[t] for t in tracks]
     tracks = merge_fragments(tracks, frame, x, y, tcfg)
+    n_linked = len(tracks)
+    tracks = drop_weak(tracks, det.get("peak_snr"), tcfg)
     tracks.sort(key=lambda t: (frame[t[0]], x[t[0]]))
     rows, pts = [], {k: [] for k in ("track_id", *det.keys())}
     for tid, t in enumerate(tracks, 1):
@@ -311,5 +324,6 @@ def build_tracks(det: dict, *, fps: float, width: int, height: int, star_sigma_p
         for k in det:
             pts[k].append(det[k][t])
     points = {k: (np.concatenate(v) if v else np.empty(0)) for k, v in pts.items()}
-    stats = {"detections": int(len(frame)), "static": int(static.sum()), "tracks": len(rows)}
+    stats = {"detections": int(len(frame)), "static": int(static.sum()), "tracks": len(rows),
+             "weak_dropped": n_linked - len(rows)}
     return rows, points, stats

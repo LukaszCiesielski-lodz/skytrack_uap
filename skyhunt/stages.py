@@ -137,7 +137,7 @@ def detect(ctx: StageContext) -> dict:
                                               "star_sigma_px")} | {"flagged_frames": len(res.flagged_frames)}}
 
 
-@PIPELINE.stage("tracks", sections=("tracks", "camera.nominal_hfov_deg"), requires=("detect",), rev=2)
+@PIPELINE.stage("tracks", sections=("tracks", "camera.nominal_hfov_deg"), requires=("detect",), rev=3)
 def tracks(ctx: StageContext) -> dict:
     import pandas as pd
 
@@ -151,8 +151,8 @@ def tracks(ctx: StageContext) -> dict:
                                        tcfg=ctx.cfg["tracks"])
     pd.DataFrame(rows).to_parquet(ctx.outdir / "tracks.parquet", index=False)
     pd.DataFrame(points).to_parquet(ctx.outdir / "track_points.parquet", index=False)
-    ctx.log.info("[%s] tory: %d (z %d detekcji, %d statycznych)", ctx.video_path.name, stats["tracks"],
-                 stats["detections"], stats["static"])
+    ctx.log.info("[%s] tory: %d (z %d detekcji, %d statycznych; odrzucone krótkie i słabe: %d)",
+                 ctx.video_path.name, stats["tracks"], stats["detections"], stats["static"], stats["weak_dropped"])
     return {"outputs": ["tracks.parquet", "track_points.parquet"], "metrics": stats}
 
 
