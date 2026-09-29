@@ -109,6 +109,31 @@ def test_report_pdfs(outdir, synthetic_video, cfg):
     assert len(r.pages) >= 5 and "Δ" in text and "dark_frames.MOV" in text
 
 
+def test_report_color_page(outdir, synthetic_video, cfg):
+    out, meta = outdir
+    (out / "color_calib.json").write_text(json.dumps({
+        "enabled": True, "monochrome": False, "calibrated": True, "ar": 0.1, "br": 0.4, "ab": -0.05, "bb": -0.6,
+        "rms_dex": 0.03, "n_stars": 40, "n_candidates": 52, "linearity_slope": -0.38, "wb_drift_dex": 0.01,
+        "sunlit_ref": {"r_g": 0.35, "b_g": -0.45, "n": 5, "bv_eq": 0.65, "green_excess": 0.0, "T_eq_K": 5780.0}}))
+    bv = np.linspace(0, 1.5, 20)
+    pd.DataFrame({"bv": bv, "r_g": 0.1 + 0.4 * bv, "b_g": -0.05 - 0.6 * bv, "used": True, "mag": 4.0}) \
+        .to_csv(out / "color_stars.csv", index=False)
+    summ = {"track_id": 2, "n_frames": 30, "n_saturated": 3, "n_color": 25, "r_g": 0.1, "b_g": -0.4, "e_r_g": 0.01,
+            "e_b_g": 0.01, "bv_eq": 0.4, "T_eq_K": 6700.0, "green_excess": 0.12, "slope_dex_s": 0.0, "chi2": 1.0,
+            "rg_spread": 0.02, "color_hint": "zielony nadmiar → Mg / O 557,7 nm?", "color_reason": "test"}
+    pd.DataFrame([summ]).to_csv(out / "track_color.csv", index=False)
+    f = np.arange(30)
+    pd.DataFrame({"track_id": 2, "frame": f, "t_s": f / 24, "r_g": 0.1, "b_g": -0.4, "e_rg": 0.01, "e_bg": 0.01,
+                  "snr": 20.0, "saturated": f < 3}).to_parquet(out / "track_color_points.parquet", index=False)
+    np.savez_compressed(out / "track_color_thumbs.npz", t2_f5=np.full((64, 64, 3), 90, np.uint8),
+                        t2_f20=np.full((64, 64, 3), 120, np.uint8))
+    build(out, synthetic_video, meta, cfg)
+    r, text = _text(out / "report/objects/unid_t2.pdf")
+    assert len(r.pages) >= 3 and "Nadmiar zieleni" in text and "6700 K" in text and "dyfrakcyjnej" in text
+    r, text = _text(out / "report/summary.pdf")
+    assert "kalibracja na gwiazdach" in text and "Słońce odbite" in text
+
+
 def test_filmstrip_spans_one_second(synthetic_video, cfg):
     from skyhunt.clips import extract_frames
 

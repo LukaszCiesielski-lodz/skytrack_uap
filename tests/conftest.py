@@ -44,6 +44,59 @@ def _encode(path: Path, codec: str) -> None:
             c.mux(pkt)
 
 
+# Kolorowe wideo: zielona kropka 4×4 (Y, Cb, Cr) = (150, 80, 70) — RGB ≈ (63, 222, 59), bez
+# prześwietlenia — na parzystych współrzędnych (chroma 4:2:0) i nieruchoma niebieskawa „gwiazda”
+# obok toru (ma zniknąć przy odjęciu tła).
+GREEN_YUV = (150, 80, 70)
+STAR_XY, STAR_YUV = (40, 34), (150, 170, 100)
+
+
+def color_dot_position(i: int) -> tuple[int, int]:
+    return 8 + 2 * i, 20 + 2 * (i // 4)
+
+
+def _put(yp, up, vp, x, y, yuv):
+    yp[y - 2:y + 2, x - 2:x + 2] = yuv[0]
+    up[y // 2 - 1:y // 2 + 1, x // 2 - 1:x // 2 + 1] = yuv[1]
+    vp[y // 2 - 1:y // 2 + 1, x // 2 - 1:x // 2 + 1] = yuv[2]
+
+
+def _encode_color(path: Path, codec: str) -> None:
+    import av
+
+    with av.open(str(path), mode="w") as c:
+        c.metadata["creation_time"] = "2026-09-28T18:25:00.000000Z"
+        s = c.add_stream(codec, rate=24)
+        s.width, s.height, s.pix_fmt = SYN_W, SYN_H, "yuv420p"
+        if codec == "libx264":
+            s.options = {"crf": "4", "x264-params": f"keyint={SYN_GOP}:min-keyint={SYN_GOP}:bframes=0:scenecut=0"}
+        else:
+            s.codec_context.gop_size = SYN_GOP
+            s.bit_rate = 8_000_000
+        for i in range(SYN_N):
+            yp = np.full((SYN_H, SYN_W), 40, np.uint8)
+            up = np.full((SYN_H // 2, SYN_W // 2), 128, np.uint8)
+            vp = up.copy()
+            _put(yp, up, vp, *STAR_XY, STAR_YUV)
+            _put(yp, up, vp, *color_dot_position(i), GREEN_YUV)
+            yuv = np.concatenate([yp, up.reshape(SYN_H // 4, SYN_W), vp.reshape(SYN_H // 4, SYN_W)])
+            fr = av.VideoFrame.from_ndarray(yuv, format="yuv420p")
+            fr.pts, fr.time_base = i, Fraction(1, 24)
+            for pkt in s.encode(fr):
+                c.mux(pkt)
+        for pkt in s.encode():
+            c.mux(pkt)
+
+
+@pytest.fixture(scope="session")
+def synthetic_color_video(tmp_path_factory) -> Path:
+    av = pytest.importorskip("av")
+    codec = "libx264" if "libx264" in av.codecs_available else "mpeg4"
+    path = tmp_path_factory.mktemp("video_color") / f"synthetic_color_{codec}.mp4"
+    _encode_color(path, codec)
+    return path
+
+
 @pytest.fixture(scope="session")
 def synthetic_video(tmp_path_factory) -> Path:
     """MP4 H.264 (jeśli PyAV ma libx264) albo MPEG-4 Part 2."""

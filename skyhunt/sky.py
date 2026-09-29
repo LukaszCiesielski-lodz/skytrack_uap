@@ -54,13 +54,21 @@ def constellation_names() -> dict[str, dict]:
 
 @functools.lru_cache(maxsize=1)
 def stars() -> dict[str, np.ndarray]:
-    """Gwiazdy do mag 6: hip, ra, dec, mag."""
+    """Gwiazdy do mag 6: hip, ra, dec, mag, bv (wskaźnik barwy B−V; NaN, gdy brak)."""
     feats = _load("stars.6.json")["features"]
+
+    def bv(f) -> float:
+        try:
+            return float(f["properties"].get("bv"))
+        except (TypeError, ValueError):
+            return float("nan")
+
     return {
         "hip": np.array([int(f["id"]) for f in feats]),
         "ra": np.array([_ra(f["geometry"]["coordinates"][0]) for f in feats]),
         "dec": np.array([float(f["geometry"]["coordinates"][1]) for f in feats]),
         "mag": np.array([float(f["properties"]["mag"]) for f in feats]),
+        "bv": np.array([bv(f) for f in feats]),
     }
 
 

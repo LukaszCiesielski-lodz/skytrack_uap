@@ -1,5 +1,17 @@
 # CHANGELOG
 
+## Kolor torów — 2026-09-29
+
+- **Etap `color`** (po `identify`, przed `report`; sekcja `color` w configu).
+  - Odczyt RGB tylko dla klatek z torami, w małych wycinkach kadru: ffmpeg `rgb48le` (opcjonalnie NVDEC), a bez niego PyAV.
+  - Kalibracja na gwiazdach z katalogu (B−V z d3-celestial, 3 epoki): „linia gwiazd” log R/G, log B/G ~ B−V, dopasowanie odporne (Theil–Sen + odrzucanie).
+  - Kontrole: dryf balansu bieli między epokami, liniowość (log G vs mag ≈ −0,4), kolor satelitów (Słońce odbite).
+  - Kolor obiektu: odjęcie tła z klatek f±k, apertura wydłużona wzdłuż ruchu (kreski meteorów), bez klatek prześwietlonych.
+  - Wynik: `T_eq`, `bv_eq`, nadmiar zieleni, zmiana koloru w czasie, podpowiedź (meteor: Mg/O, Na/Fe, Ca/Mg; inne: Słońce, łuna miasta, światła nawigacyjne).
+  - Nagrania czarno-białe są wykrywane i pomijane.
+- **Raport:** strona „kolor” w PDF obiektu (kolor w czasie, wykres barw z gwiazdami i satelitami, kolorowe miniatury), strona kalibracji i kolumna „kolor” w `summary.pdf`. `report` rev 3.
+- `sky.stars()` zwraca też `bv`.
+
 ## Mniej fałszywych torów, sklejanie pociętych — 2026-09-29
 
 - **Odrzucanie łańcuchów szumu** (`tracks.weak_min_len: 10`, `tracks.weak_snr: 7`): tor krótszy niż 10 punktów i zarazem z medianą SNR maksimum < 7 jest odrzucany.

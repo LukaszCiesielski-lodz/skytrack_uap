@@ -184,6 +184,139 @@ def object_pdf(path: Path, obj: dict, rcfg: dict, always: list[str]) -> None:
                 a.set_yticks([])
             pdf.savefig(fig)
 
+        if obj.get("color_data"):
+            _color_page(pdf, Figure, obj)
+
+
+def _locus_plot(ax, calib: dict | None, stars, sunlit: dict | None) -> None:
+    """Wykres barw: gwiazdy kalibracyjne, linia gwiazd z podziałką B−V, kolor Słońca z satelitów."""
+    from .color import ColorCalib
+
+    if stars is not None and len(stars):
+        used = stars["used"].astype(bool) if "used" in stars else np.ones(len(stars), bool)
+        ax.scatter(stars["r_g"][~used], stars["b_g"][~used], s=6, c="#cccccc", label="gwiazdy odrzucone")
+        sc = ax.scatter(stars["r_g"][used], stars["b_g"][used], s=9, c=stars["bv"][used], cmap="coolwarm",
+                        vmin=-0.2, vmax=1.8, label="gwiazdy (kolor = B−V z katalogu)")
+        ax.figure.colorbar(sc, ax=ax, fraction=0.04, pad=0.01).set_label("B−V", fontsize=7)
+    cal = ColorCalib.from_dict(calib)
+    if cal:
+        bv = np.linspace(-0.3, 2.0, 50)
+        lx, ly = cal.locus(bv)
+        ax.plot(lx, ly, "k-", lw=0.8, label="linia gwiazd")
+        for b in (0.0, 0.5, 1.0, 1.5):
+            px, py = cal.locus(b)
+            ax.plot(px, py, "k|", ms=6)
+            ax.annotate(f"{b:.1f}", (px, py), textcoords="offset points", xytext=(3, 3), fontsize=6)
+    if sunlit and sunlit.get("r_g") is not None:
+        ax.plot(sunlit["r_g"], sunlit["b_g"], "*", color=C_SAT, ms=11, mec="k", label="satelity (Słońce odbite)")
+    ax.set_xlabel("log₁₀ R/G")
+    ax.set_ylabel("log₁₀ B/G")
+
+
+def _color_page(pdf, Figure, obj: dict) -> None:
+    cd = obj["color_data"]
+    c = cd["summary"]
+    fig = Figure(figsize=A4)
+    fig.suptitle(f"{obj['title']} — kolor", fontsize=12, x=0.02, ha="left")
+    p = cd["points"]
+    ax = fig.add_axes([0.06, 0.52, 0.40, 0.36])
+    if p is not None and len(p):
+        t = p["t_s"].to_numpy() - float(p["t_s"].min())
+        good = (~p["saturated"].astype(bool)) & (p["snr"] >= cd["min_snr"]) & np.isfinite(p["r_g"]) & np.isfinite(p["b_g"])
+        ax.errorbar(t[good], p["r_g"][good], yerr=p["e_rg"][good], fmt="o", ms=2.5, lw=0.6, color="#d62728",
+                    label="log R/G")
+        ax.errorbar(t[good], p["b_g"][good], yerr=p["e_bg"][good], fmt="s", ms=2.5, lw=0.6, color="#1f77b4",
+                    label="log B/G")
+        sat = p["saturated"].astype(bool).to_numpy()
+        if sat.any():
+            for x in t[sat]:
+                ax.axvline(x, color="#bbbbbb", lw=0.4, zorder=0)
+        ax.legend(fontsize=7, loc="best")
+    ax.set_xlabel("czas od początku toru [s]")
+    ax.set_ylabel("dex")
+    ax.set_title(f"kolor w czasie (szare pionowe: klatki prześwietlone, {int(c['n_saturated'])})", fontsize=8)
+
+    ax2 = fig.add_axes([0.55, 0.52, 0.40, 0.36])
+    _locus_plot(ax2, cd.get("calib"), cd.get("stars"), cd.get("sunlit"))
+    if p is not None and len(p):
+        ax2.scatter(p["r_g"][good], p["b_g"][good], s=5, c=obj["color"], alpha=0.35)
+    if math.isfinite(float(c["r_g"])):
+        ax2.errorbar(float(c["r_g"]), float(c["b_g"]), xerr=float(c["e_r_g"]), yerr=float(c["e_b_g"]), fmt="o",
+                     color=obj["color"], mec="k", ms=7, label=f"tor #{obj['track_id']}")
+    ax2.legend(fontsize=6, loc="best")
+    ax2.set_title("wykres barw", fontsize=8)
+
+    thumbs = cd.get("thumbs") or []
+    if thumbs:
+        stack = np.stack([im for _, im in thumbs]).astype(np.float32)
+        lo, hi = np.percentile(stack, [1, 99.8])
+        for i, (f, im) in enumerate(thumbs[:6]):
+            a = fig.add_axes([0.06 + i * 0.148, 0.22, 0.13, 0.2])
+            a.imshow(np.clip((im.astype(np.float32) - lo) / max(hi - lo, 1), 0, 1), interpolation="nearest")
+            a.set_title(f"kl. {f}", fontsize=7)
+            a.set_xticks([])
+            a.set_yticks([])
+    lines = [f"Podpowiedź z koloru: {c['color_hint']}   ({c['color_reason']})",
+             cd.get("calib_line", ""),
+             "RGB to trzy szerokie pasma, nie widmo: skład (linie Na / Mg / Fe) wymaga siatki dyfrakcyjnej. "
+             "Kolor liczony z klatek nieprześwietlonych, po odjęciu tła z sąsiednich klatek."]
+    fig.text(0.06, 0.16, "\n".join(x for x in lines if x), fontsize=7.5, va="top", wrap=True)
+    pdf.savefig(fig)
+
+
+def _color_params(c) -> list[tuple[str, str]]:
+    if int(c["n_color"]) == 0:
+        return [("Kolor", f"brak ({c['color_reason']})"[:60])]
+    T = float(c["T_eq_K"])
+    col = (f"{T:.0f} K / B−V {float(c['bv_eq']):.2f}" if math.isfinite(T)
+           else f"R/G {float(c['r_g']):+.2f} B/G {float(c['b_g']):+.2f} dex")
+    return [("Kolor: T_eq / B−V", col),
+            ("Nadmiar zieleni", _fmt(float(c["green_excess"]), "+.2f", " dex")),
+            ("Kolor – podpowiedź", str(c["color_hint"])[:42]),
+            ("Klatki koloru (prześw.)", f"{int(c['n_color'])} z {int(c['n_frames'])} ({int(c['n_saturated'])})")]
+
+
+def _color_short(c) -> str:
+    if c is None:
+        return ""
+    if int(c["n_color"]) == 0:
+        return "–"
+    T = float(c["T_eq_K"])
+    return (f"{T:.0f} K " if math.isfinite(T) else "") + str(c["color_hint"])[:24]
+
+
+def _color_summary_lines(ci: dict, colors: dict) -> list[str]:
+    if not ci:
+        return []
+    if ci.get("enabled") is False:
+        return ["Analiza koloru wyłączona (color.enabled: off)."]
+    if ci.get("monochrome"):
+        return ["Nagranie czarno-białe (R = G = B): kolor niedostępny.",
+                "Do analizy koloru nagrywaj w symulacji kolorowej (np. Standard/Provia) ze stałym balansem bieli."]
+    if ci.get("error"):
+        return [f"Analiza koloru nieudana: {ci['error']}"]
+    lines = []
+    if ci.get("calibrated"):
+        lines += [f"Gwiazdy użyte: {ci['n_stars']} (z {ci.get('n_candidates', '?')} zmierzonych)",
+                  f"Linia gwiazd: log R/G = {ci['ar']:+.3f} {ci['br']:+.3f}·(B−V)",
+                  f"              log B/G = {ci['ab']:+.3f} {ci['bb']:+.3f}·(B−V)",
+                  f"RMS: {ci['rms_dex']:.3f} dex",
+                  f"Liniowość (log G vs mag): {_fmt(ci.get('linearity_slope'), '+.2f')}  (oczekiwane −0,40)",
+                  f"Dryf balansu bieli między epokami: {ci.get('wb_drift_dex') or 0:.3f} dex"]
+    else:
+        lines.append(f"Za mało gwiazd do kalibracji ({ci.get('n_candidates', 0)}): kolor bez przeliczenia na B−V.")
+    sr = ci.get("sunlit_ref")
+    if sr:
+        lines.append(f"Satelity (Słońce odbite, {sr['n']}): log R/G {sr['r_g']:+.3f}, log B/G {sr['b_g']:+.3f}"
+                     + (f", B−V {sr['bv_eq']:.2f}, T {sr['T_eq_K']:.0f} K" if sr.get("bv_eq") is not None else ""))
+    n_col = sum(1 for c in colors.values() if int(c["n_color"]) > 0)
+    lines += ["", f"Torów z kolorem: {n_col} z {len(colors)}",
+              "",
+              "Czego nie mówi kolor RGB: składu meteoru wprost. Trzy szerokie pasma dają temperaturę",
+              "barwową (położenie na linii gwiazd) i nadmiar zieleni (emisja Mg 517 nm / O 557,7 nm).",
+              "Proporcje linii Na / Mg / Fe wymagają siatki dyfrakcyjnej przed obiektywem."]
+    return lines
+
 
 def attach_file(pdf_path: Path, file_path: Path) -> None:
     from pypdf import PdfWriter
@@ -243,6 +376,17 @@ def summary_pdf(path: Path, s: dict, rcfg: dict, always: list[str]) -> None:
             ax.set_title("zgodność poprawki czasu między satelitami", fontsize=9)
         pdf.savefig(fig)
 
+        ci = s.get("color_info")
+        if ci:
+            fig = Figure(figsize=A4)
+            fig.suptitle("Kolor: kalibracja na gwiazdach z katalogu (B−V)", x=0.02, ha="left", fontsize=13)
+            fig.text(0.02, 0.92, "\n".join(s["color_lines"]), family="monospace", fontsize=8, va="top")
+            if ci.get("calibrated") or (s.get("color_stars") is not None and len(s["color_stars"])):
+                ax = fig.add_axes([0.5, 0.1, 0.42, 0.75])
+                _locus_plot(ax, ci, s.get("color_stars"), ci.get("sunlit_ref"))
+                ax.legend(fontsize=7, loc="best")
+            pdf.savefig(fig)
+
         _table_pages(pdf, Figure, "Tory", s["table_header"], s["table_rows"])
         _table_pages(pdf, Figure, "Satelity przewidziane w kadrze (katalog), a niewykryte",
                      s["pred_header"], s["pred_rows"])
@@ -284,6 +428,26 @@ def build(outdir: Path, video: Path, meta: VideoMeta, cfg: dict) -> list[str]:
     air = {int(r["track_id"]): r for _, r in pd.read_csv(air_path).iterrows()} if air_path.exists() else {}
     adsb_info = read_json(air_src) if air_src.exists() else {}
     adsb_checked = bool(adsb_info.get("enabled")) and "error" not in adsb_info
+    col_info = read_json(outdir / "color_calib.json") if (outdir / "color_calib.json").exists() else {}
+    colors = {}
+    if (outdir / "track_color.csv").exists():
+        colors = {int(r["track_id"]): r for _, r in pd.read_csv(outdir / "track_color.csv").iterrows()}
+    col_pts = (pd.read_parquet(outdir / "track_color_points.parquet")
+               if (outdir / "track_color_points.parquet").exists() else None)
+    col_stars = None
+    if (outdir / "color_stars.csv").exists():
+        try:
+            col_stars = pd.read_csv(outdir / "color_stars.csv")
+        except pd.errors.EmptyDataError:
+            col_stars = None
+    col_thumbs = (dict(np.load(outdir / "track_color_thumbs.npz"))
+                  if (outdir / "track_color_thumbs.npz").exists() else {})
+    ccfg = cfg.get("color", {})
+    calib_line = ""
+    if col_info.get("calibrated"):
+        calib_line = (f"Kalibracja: {col_info['n_stars']} gwiazd, RMS {col_info['rms_dex']:.3f} dex, "
+                      f"dryf balansu bieli {col_info.get('wb_drift_dex') or 0:.3f} dex, "
+                      f"liniowość {_fmt(col_info.get('linearity_slope'), '+.2f')} (oczek. −0,40)")
     periodic_min = float(cfg.get("classify", {}).get("periodic_min_power", 6.0))
     hint = cfg.get("astrometry", {}).get("hint_star")
     always = list(rcfg.get("always_label") or []) + ([hint] if hint else [])
@@ -390,6 +554,14 @@ def build(outdir: Path, video: Path, meta: VideoMeta, cfg: dict) -> list[str]:
                 notes.insert(0, f"Najbliższy kandydat katalogowy: NORAD {best['norad']} {best['name']} "
                                 f"(pewność {best.get('confidence') or 'poniżej progu'})")
             name = f"air_{a['icao']}_t{tid}" if a is not None else f"unid_t{tid}"
+        c = colors.get(tid)
+        if c is not None:
+            params += _color_params(c)
+            cp = col_pts[col_pts["track_id"] == tid].sort_values("frame") if col_pts is not None and len(col_pts) else None
+            th = sorted((int(k.split("_f")[1]), v) for k, v in col_thumbs.items() if k.startswith(f"t{tid}_f"))
+            obj["color_data"] = {"summary": c, "points": cp, "thumbs": th, "calib": col_info,
+                                 "stars": col_stars, "sunlit": col_info.get("sunlit_ref"),
+                                 "min_snr": float(ccfg.get("min_snr", 5)), "calib_line": calib_line}
         obj.update(title=title, params=params, notes=notes)
 
         # klip i pasek klatek
@@ -453,7 +625,8 @@ def build(outdir: Path, video: Path, meta: VideoMeta, cfg: dict) -> list[str]:
                      f"{t['az0']:.1f}/{t['alt0']:.1f}", f"{t['az1']:.1f}/{t['alt1']:.1f}",
                      f"{b['norad']} {b['name'][:18]}" if b else "–",
                      (b or {}).get("confidence") or "–",
-                     "" if b else ("samolot (ADS-B)" if int(t["track_id"]) in air else t["class_hint"])])
+                     "" if b else ("samolot (ADS-B)" if int(t["track_id"]) in air else t["class_hint"]),
+                     _color_short(colors.get(int(t["track_id"])))])
     pred_rows = []
     if len(pred):
         for _, p in pred[~pred["detected"].astype(bool)].iterrows():
@@ -478,8 +651,9 @@ def build(outdir: Path, video: Path, meta: VideoMeta, cfg: dict) -> list[str]:
                    "białe kreski: co 1 s; przerywana: predykcja z elementów orbit",
          "info_lines": info, "sync_members": members, "delta_s": delta,
          "table_header": ["tor", "start UTC", "czas [s]", "°/s", "Az/Alt start", "Az/Alt koniec", "NORAD", "pewność",
-                          "podpowiedź"],
+                          "podpowiedź", "kolor"],
          "table_rows": rows,
+         "color_info": col_info, "color_stars": col_stars, "color_lines": _color_summary_lines(col_info, colors),
          "pred_header": ["NORAD", "nazwa", "wejście UTC", "wyjście UTC", "odl. [km]", "oświetl."],
          "pred_rows": pred_rows, "notes": notes}
     summary_pdf(rep / "summary.pdf", s, rcfg, always)

@@ -164,6 +164,18 @@ def validate(cfg: dict) -> None:
     rep = cfg.get("report") or {}
     if rep and rep.get("identified_min_confidence") not in ("high", "medium", "low"):
         errors.append("report.identified_min_confidence: high | medium | low")
+    col = cfg.get("color") or {}
+    if col:
+        if str(col.get("enabled", "auto")) not in ("auto", "off"):
+            errors.append("color.enabled: auto | off")
+        tr = col.get("transfer", "bt709")
+        if tr not in ("bt709", "linear") and not (isinstance(tr, (int, float)) and 1.0 <= tr <= 3.0):
+            errors.append("color.transfer: bt709 | linear | gamma z [1, 3]")
+        ann = col.get("annulus_px")
+        if not (isinstance(ann, list) and len(ann) == 2 and col.get("aperture_px", 0) < ann[0] < ann[1]):
+            errors.append("color: wymagane aperture_px < annulus_px[0] < annulus_px[1]")
+        if not 0 < float(col.get("sat_level", 0)) <= 1:
+            errors.append("color.sat_level: (0, 1]")
     for fname, over in (cfg.get("files") or {}).items():
         if not isinstance(over, dict):
             errors.append(f"files.{fname}: oczekiwano słownika nadpisań")

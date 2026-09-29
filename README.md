@@ -47,6 +47,31 @@ Dla każdego nagrania nieba w `out/<plik>/report/`:
 | `objects/unid_t<id>.pdf` | obiekt niezidentyfikowany: tor **na czerwono** na tle gwiazd; prędkość kątowa [°/s], czas przelotu, początek i koniec w UTC (± niepewność poprawki czasu), RA/Dec i Az/Alt, podpowiedź klasy, niesprawdzone hipotezy |
 | `clips/t<id>.mp4` | wycinek ≥ 1 s wokół toru, obiekt zaznaczony okręgiem |
 
+W nagraniach kolorowych PDF obiektu ma też stronę **kolor** (niżej), a `summary.pdf` stronę kalibracji koloru i kolumnę „kolor” w tabeli torów.
+
+### Kolor
+
+Etap `color` mierzy kolor każdego toru.
+- **Kalibracja:** co minutę nagrania (3 epoki) mierzę kolor gwiazd z katalogu o znanym wskaźniku barwy B−V. Z nich wychodzi „linia gwiazd” na wykresie log(R/G) × log(B/G). To usuwa wpływ balansu bieli, symulacji filmu i łuny, a przy okazji wychodzi dryf balansu bieli w trakcie nagrania.
+- **Obiekt:** w każdej klatce odejmuję tło z klatek, w których obiekt jest już dalej (gwiazdy i łuna znikają). Liczę tylko klatki nieprześwietlone.
+- **Wynik:** temperatura barwowa `T_eq` (położenie na linii gwiazd), **nadmiar zieleni** (odległość od linii) i zmiana koloru w czasie. Pliki: `color_calib.json`, `track_color.csv`, `track_color_points.parquet`.
+- **Kontrola:** zidentyfikowane satelity to światło Słońca odbite (B−V ≈ 0,6–0,9). Ich średni kolor jest odniesieniem dla innych torów.
+
+Podpowiedzi (hipotezy, zawsze z liczbami):
+
+| obiekt | kolor | podpowiedź |
+|---|---|---|
+| meteor | nadmiar zieleni | Mg 517 nm / O 557,7 nm? |
+| meteor | ciepły (< 3500 K) | Na/Fe? |
+| meteor | gorący (> 8000 K) | szybki, Ca/Mg? |
+| inne | jak satelity | oświetlony Słońcem |
+| inne | ciepły (< 3000 K) | łuna miasta (sód)? |
+| inne | skaczący R/G | światła nawigacyjne? |
+
+**Czego RGB nie powie:** kamera ma trzy szerokie pasma, więc składu meteoru (proporcji linii Na / Mg / Fe) nie da się z niej odczytać. Do tego potrzebna jest siatka dyfrakcyjna przed obiektywem (folia 500–1000 linii/mm). Obok meteoru pojawia się wtedy jego widmo.
+
+**Ustawienia aparatu do koloru:** stały balans bieli (światło dzienne albo 5500 K, nie auto), symulacja Standard/Provia bez Color Chrome, nasycenie 0. Jasne obiekty są prześwietlone i nie mają koloru; PDF podaje, ile klatek odrzucono. Nagrania czarno-białe są wykrywane i pomijane.
+
 ### `tracks_final.csv`: tabela wszystkich torów
 
 Plik jest w `out/<plik>/tracks_final.csv`, jeden wiersz na tor. Obok leży ta sama tabela jako `.parquet`. To najwygodniejsze miejsce, żeby znaleźć konkretny obiekt, zanim otworzysz PDF-y.
@@ -74,6 +99,9 @@ Plik jest w `out/<plik>/tracks_final.csv`, jeden wiersz na tor. Obok leży ta sa
 | `f_peak_hz`, `f_alias_hz`, `f_power` | modulacja jasności (błyski, obrót); przy 24 kl/s nie da się odróżnić `f_peak_hz` od `f_alias_hz` |
 | `starts_inside`, `ends_inside` | `False` oznacza, że obiekt wlatuje lub wylatuje przez krawędź kadru; `True` na końcu toru oznacza, że gaśnie w kadrze (np. wejście w cień Ziemi) |
 | `class_hint`, `class_reason` | podpowiedź klasy dla niezidentyfikowanych: `satelita?`, `meteor?`, `samolot?`, `bliski obiekt?` |
+| `along_sigma_px`, `streak_ratio` | kształt śladu w klatce: wydłużenie wzdłuż ruchu (kreska meteoru) i stosunek do szerokości w poprzek |
+
+Kolor torów jest w osobnym pliku `track_color.csv` (ten sam `track_id`): `T_eq_K`, `bv_eq`, `green_excess`, `color_hint`, `n_color`, `n_saturated`.
 
 **Przykłady (komórka w Colab).**
 

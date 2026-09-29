@@ -211,6 +211,43 @@ iod:
   unid_max_curv_arcsec: 150  # …prawie proste (orbita)…
   unid_min_snr: 6.0          # …i wyraźnie nad szumem
 
+color:
+  # Kolor torów z nagrań kolorowych (czarno-białe są wykrywane i pomijane). RGB to 3 szerokie
+  # pasma: wynik to temperatura barwowa na „linii gwiazd”, nadmiar zieleni i zmiana koloru —
+  # wskazówka, nie widmo. Najlepiej: stały balans bieli w aparacie (światło dzienne / 5500 K).
+  enabled: auto              # auto | off
+  reader: auto               # auto (ffmpeg, a bez niego PyAV) | pyav
+  ffmpeg_hwaccel: auto       # auto (NVDEC, jeśli działa) | on | off
+  yuv_matrix: auto           # auto (z nagłówka strumienia) | bt709 | bt601
+  transfer: bt709            # linearyzacja: bt709 | linear | liczba (gamma)
+  calib_epochs: 3            # epoki do kalibracji na gwiazdach (per epoka: dryf balansu bieli)
+  calib_frames: 15           # mediana tylu klatek wokół epoki
+  calib_max_mag: 6.0
+  isolation_px: 15           # bez innej gwiazdy katalogowej bliżej
+  aperture_px: 4             # promień apertury (chroma 4:2:0 ma połowę rozdzielczości)
+  annulus_px: [7, 11]
+  sat_level: 0.98            # kanał ≥ tyle (0…1) = prześwietlony, klatka bez koloru
+  min_stars: 15
+  min_snr: 5                 # SNR kanału G w klatce toru
+  diff_min_sep_px: 16        # tło: klatki f±k, w których obiekt jest już o tyle dalej
+  max_diff_frames: 60        # …ale nie dalej niż ~2 s (wolne obiekty)
+  track_max_frames: 300      # najwyżej tyle klatek toru (równomiernie)
+  chunk_frames: 60           # dekodowanie porcjami: mały wycinek kadru
+  max_half_len_px: 60        # apertura wzdłuż kreski meteoru: aperture_px + 2·σ_wzdłuż, najwyżej tyle
+  thumb_px: 64               # kolorowe miniatury w PDF
+  # podpowiedzi (hipotezy):
+  green_thr: 0.05            # nadmiar zieleni [dex]: Mg 517 / O 557,7 nm u meteorów
+  warm_T_K: 3500             # meteor cieplejszy → Na/Fe?
+  hot_T_K: 8000              # meteor gorętszy → szybki, Ca/Mg?
+  city_T_K: 3000             # obiekt nie-meteor cieplejszy → łuna miasta (sód)?
+  sunlit_tol_dex: 0.05       # odległość od koloru satelitów (Słońce odbite)
+  sunlit_bv_expected: [0.5, 1.0]   # B−V satelitów oczekiwane (kontrola kalibracji)
+  nav_spread_dex: 0.15       # rozrzut log R/G między klatkami: migające światła czerwone/zielone
+  change_chi2: 3.0           # zmiana koloru: χ² stałości > tyle…
+  change_dex: 0.1            # …i zmiana na długości śladu > tyle
+  linearity_warn: 0.1        # |nachylenie log G vs mag + 0,4| > tyle → ostrzeżenie (krzywa tonalna)
+  wb_drift_warn: 0.03        # dryf linii gwiazd między epokami [dex] → ostrzeżenie o balansie bieli
+
 paths:
   raw_dir: /content/drive/MyDrive/skyhunt/raw
   out_dir: /content/drive/MyDrive/skyhunt/out

@@ -518,8 +518,24 @@ def adsb(ctx: StageContext) -> dict:
                         "adsb_error": "error" in info}}
 
 
-@PIPELINE.stage("report", sections=("report", "iod", "classify.periodic_min_power"), requires=("identify", "adsb"),
-                rev=2, roles=("sky",))
+@PIPELINE.stage("color", sections=("color",), requires=("identify",), rev=1, roles=("sky",))
+def color(ctx: StageContext) -> dict:
+    """Kolor torów: kalibracja na gwiazdach (B−V), kolor obiektu klatka po klatce, podpowiedź."""
+    from .color import SUMMARY_COLS, run
+
+    try:
+        return run(ctx.outdir, ctx.video_path, load_meta(ctx), ctx.cfg, ctx.log)
+    except Exception as e:  # noqa: BLE001 — brak koloru nie blokuje raportu
+        import pandas as pd
+
+        ctx.log.warning("[%s] kolor niedostępny: %s", ctx.video_path.name, e)
+        ctx.write_json("color_calib.json", {"enabled": True, "error": str(e)})
+        pd.DataFrame(columns=SUMMARY_COLS).to_csv(ctx.outdir / "track_color.csv", index=False)
+        return {"outputs": ["color_calib.json", "track_color.csv"], "metrics": {"color_error": True}}
+
+
+@PIPELINE.stage("report", sections=("report", "iod", "classify.periodic_min_power"),
+                requires=("identify", "adsb", "color"), rev=3, roles=("sky",))
 def report(ctx: StageContext) -> dict:
     import pandas as pd
 
