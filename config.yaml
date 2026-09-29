@@ -159,7 +159,11 @@ identify:
   dir_tol_deg: 3
   cluster_s: 1.0             # zgodność δ między torami
   min_tracks: 2              # ile niezależnych torów musi potwierdzić poprawkę czasu
-  reference: first           # first (najwcześniejszy zidentyfikowany) | best | median
+  # Δ zegara: median = mediana δ zgodnych satelitów (każdy raz, bez classfd) | first = z pierwszego
+  # zidentyfikowanego | best. Raport i tak pokazuje pierwszego jako odniesienie. „first” przenosił
+  # błąd elementów jednego Starlinka na cały czas (DSCF4647/4648: niezgodność ≥ 0,3 s).
+  reference: median
+  median_sigma_floor_s: 0.02
   refine_half_range_s: 2
   tle_along_track_sigma_km: 1.0
   cross_tol_deg: 0.1         # identyfikacja przy ustalonym Δ

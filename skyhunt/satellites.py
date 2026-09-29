@@ -587,9 +587,11 @@ def synchronize(observer: Observer, catalog: Catalog, tracks: list[TrackSky], gr
 
     Kandydaci: tory proste o prędkości LEO. Dla każdego okna (± window_sigma·σ, potem
     ± sync_search_s) szukamy par tor–satelita; Δ uznajemy, gdy ≥ ``min_tracks`` różnych
-    torów daje zgodne δ (± ``cluster_s``). Wartość Δ bierzemy z pierwszego (najwcześniejszego
-    w nagraniu) zidentyfikowanego satelity (``reference: first``) — tak ustalił użytkownik —
-    a zgodność pozostałych jest kontrolą."""
+    torów daje zgodne δ (± ``cluster_s``). ``reference: median`` (domyślnie od 29.09.2026):
+    Δ = mediana δ zgodnych satelitów; ``first``: Δ z pierwszego (najwcześniejszego w nagraniu)
+    zidentyfikowanego satelity. W obu przypadkach raport pokazuje pierwszego jako odniesienie.
+    Dwie części jednego nagrania (DSCF4647/4648) z ``first`` różniły się o ≥ 0,3 s mimo tego
+    samego zegara aparatu — błąd elementów jednego Starlinka przechodził na cały czas."""
     cands = [t for t in tracks if is_sync_candidate(t, icfg)]
     windows = [float(icfg["window_sigma"]) * prior_sigma_s]
     if search_s > windows[0]:
@@ -620,20 +622,48 @@ def synchronize(observer: Observer, catalog: Catalog, tracks: list[TrackSky], gr
                 best_key, best_cluster = key, list(members.values())
         by_id = {t.track_id: t for t in tracks}
         n_ok = int(best_key[0])
+        mode = str(icfg["reference"])
         if n_ok >= int(icfg["min_tracks"]):
-            ref = _reference(best_cluster, by_id, str(icfg["reference"]))
+            # przy „median” w raporcie nadal pokazujemy pierwszego zidentyfikowanego satelitę
+            ref = _reference(best_cluster, by_id, "first" if mode == "median" else mode)
             conf, method = "high", f"zgodność {n_ok} torów (±{icfg['cluster_s']} s)"
         else:
             ref = min(pairs, key=lambda m: m.rms_deg)
             best_cluster = [ref]
             conf, method = "low", "pojedynczy tor — brak potwierdzenia drugim satelitą"
-        delta = ref.delta_s if str(icfg["reference"]) != "median" else float(np.median([m.delta_s for m in best_cluster]))
+        delta = ref.delta_s
         sigma = _sigma_delta(ref, by_id[ref.track_id], len(by_id[ref.track_id].tau), icfg)
+        if mode == "median" and conf == "high":
+            med, sig_med, n_sat = median_delta(best_cluster)
+            if n_sat >= 2:
+                delta, sigma = med, max(sig_med, float(icfg.get("median_sigma_floor_s", 0.02)))
+                method += f"; Δ = mediana {n_sat} satelitów"
         return SyncResult(True, delta, sigma, conf, method, ref.to_dict(),
                           [m.to_dict() for m in sorted(best_cluster, key=lambda m: by_id[m.track_id].tau[0])],
                           W), grid
     return SyncResult(False, 0.0, prior_sigma_s, "none", "brak dopasowań", None, [],
                       windows[-1], "czas z metadanych (nie zsynchronizowano)"), last_grid
+
+
+def median_delta(cluster: list[Match], min_public: int = 3) -> tuple[float, float, int]:
+    """(Δ, σ_Δ, liczba satelitów): mediana δ po satelitach (każdy NORAD raz — pocięty tor nie
+    waży więcej), bez elementów amatorskich classfd, gdy publicznych jest ≥ ``min_public``.
+    σ = 1,2533·σ_MAD/√n: rozrzut δ_j obejmuje błędy elementów orbit wzdłuż toru (manewry
+    Starlinków), których nie widać w dopasowaniu pojedynczego toru."""
+    by_sat: dict[int, list[float]] = {}
+    src: dict[int, str] = {}
+    for m in cluster:
+        by_sat.setdefault(int(m.norad), []).append(float(m.delta_s))
+        src[int(m.norad)] = str(m.source)
+    sats = [n for n in by_sat if src[n] != "classfd"]
+    if len(sats) < min_public:
+        sats = list(by_sat)
+    d = np.array([np.median(by_sat[n]) for n in sats])
+    med = float(np.median(d))
+    if len(d) < 2:
+        return med, float("nan"), len(d)
+    mad = 1.4826 * float(np.median(np.abs(d - med)))
+    return med, 1.2533 * mad / math.sqrt(len(d)), len(d)
 
 
 def _reference(cluster: list[Match], by_id: dict, mode: str) -> Match:

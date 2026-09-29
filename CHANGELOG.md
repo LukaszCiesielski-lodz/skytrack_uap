@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## Poprawka zegara z mediany satelitów — 2026-09-29
+
+- `identify.reference: median` (decyzja użytkownika): Δ = mediana δ zgodnych satelitów, każdy NORAD raz, bez classfd przy ≥ 3 publicznych; σ = 1,2533·σ_MAD/√n (obejmuje błędy elementów wzdłuż orbity).
+- Powód: DSCF4647 i DSCF4648 to jedno nagranie podzielone przez aparat, a z `first` wyszło Δ +4,95 i +3,64 s — niezgodność ≥ 0,3 s mimo tego samego zegara.
+- Raport nadal pokazuje pierwszego zidentyfikowanego satelitę jako odniesienie; metoda w `time_sync.json` ma dopisek „Δ = mediana N satelitów”.
+
 ## Kolor torów — 2026-09-29
 
 - **Etap `color`** (po `identify`, przed `report`; sekcja `color` w configu).

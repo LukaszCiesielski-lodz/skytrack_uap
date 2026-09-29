@@ -113,6 +113,21 @@ def test_sync_and_identify_two_tracks(tmp_path, high_pass, cfg):
     assert ids[1][0].height_km == pytest.approx(420, abs=60)
 
 
+def test_median_delta_per_satellite_without_classfd():
+    from skyhunt.satellites import Match, median_delta
+
+    def m(tid, norad, d, src="spacetrack"):
+        return Match(tid, 0, norad, "x", "", "", src, d, 0.01, 0.01, 1.0, 1.0, 0.0, 500.0, 450.0, 0.8)
+
+    cluster = [m(1, 100, 4.95), m(2, 101, 4.40), m(3, 102, 4.50), m(4, 103, 4.60),
+               m(5, 200, 5.00, "classfd"), m(6, 200, 5.05, "classfd"), m(7, 200, 5.02, "classfd"),
+               m(8, 104, 4.45), m(9, 104, 4.47)]                  # NORAD 104: pocięty na 2 tory
+    med, sig, n = median_delta(cluster)
+    assert n == 5 and med == pytest.approx(4.50) and 0 < sig < 0.2
+    med2, _, n2 = median_delta(cluster[4:7] + cluster[:1])         # mało publicznych: classfd też liczony
+    assert n2 == 2 and med2 == pytest.approx((4.95 + 5.02) / 2)
+
+
 def test_observer_offset_from_parallax(tmp_path, high_pass):
     """Tory nagrane ~2,2 km od współrzędnych w configu (jak DSCF4641): paralaksa odtwarza przesunięcie."""
     from skyhunt.satellites import observer_offset

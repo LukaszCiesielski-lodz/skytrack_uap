@@ -138,8 +138,9 @@ Przed wysłaniem:
 
 **Synchronizacja czasu.** Pozycje torów na niebie liczymy z plate solve i modelu nieruchomej kamery: piksel ↔ stały kierunek Alt/Az. Nie zależą one od błędu zegara. Tory proste o prędkościach LEO porównujemy z przelotami z elementów orbit (SGP4) w oknie ±5σ wokół czasu z metadanych, a gdy to nie wystarczy, w ±2 h.
 
-- Poprawka Δ pochodzi z **pierwszego zidentyfikowanego satelity**.
-- Uznajemy ją, gdy co najmniej 2 niezależne tory dają zgodne δ (±1 s). Pojedyncze dopasowanie ma pewność `low`, bo równoległe powłoki Starlinka łatwo pomylić.
+- Poprawka Δ to **mediana δ zgodnych satelitów**: każdy satelita liczy się raz, a elementy amatorskie (classfd) są pomijane, gdy publicznych jest co najmniej 3. Raport nadal pokazuje pierwszego zidentyfikowanego satelitę jako odniesienie.
+- Wcześniej Δ brałem z pierwszego satelity. Dwie części jednego nagrania (DSCF4647/4648, ten sam zegar aparatu) różniły się wtedy o ≥ 0,3 s, bo błąd elementów orbity jednego Starlinka przechodził na cały czas. Stary tryb: `identify.reference: first`.
+- Uznajemy Δ, gdy co najmniej 2 niezależne tory dają zgodne δ (±1 s). Pojedyncze dopasowanie ma pewność `low`, bo równoległe powłoki Starlinka łatwo pomylić.
 - Pozostałe satelity identyfikujemy już przy ustalonym Δ i raportujemy rozrzut ich δ.
 
 **Elementy orbit.** CelesTrak udostępnia tylko bieżące elementy, więc snapshot trzeba zamrozić krótko po nagraniu (komórka w notebooku). Jest zapisywany w `cache/gp/` na Drive, a kopia użytych elementów trafia do `gp_elements.csv` przy wynikach. Format to CSV/OMM, bo numery NORAD ≥ 100000 nie mieszczą się w TLE. Space-Track (historia elementów, pełny katalog z członami rakiet i śmieciami) jest opcjonalny: login wpisujesz w Colab Secrets.
