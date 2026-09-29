@@ -11,6 +11,8 @@
   - Nagrania czarno-białe są wykrywane i pomijane.
 - **Raport:** strona „kolor” w PDF obiektu (kolor w czasie, wykres barw z gwiazdami i satelitami, kolorowe miniatury), strona kalibracji i kolumna „kolor” w `summary.pdf`. `report` rev 3.
 - `sky.stars()` zwraca też `bv`.
+- Po pierwszym przebiegu (DSCF4647/4648): kalibracja na 191/184 gwiazdach, RMS 0,053/0,069 dex, liniowość −0,40/−0,39, dryf balansu bieli 0,02/0,002 dex. Satelity B−V 1,03/0,82 (czerwieńsze od Słońca), więc zakres kontrolny rozszerzony do 0,5–1,2.
+  - „Światła nawigacyjne?” tylko przy istotnym miganiu jasności w paśmie samolotów i ≥ 20 klatkach z kolorem. Wcześniej dostawały je ciepłe, wolne obiekty bez migania (łuna miasta). `color` rev 2.
 
 ## Mniej fałszywych torów, sklejanie pociętych — 2026-09-29
 

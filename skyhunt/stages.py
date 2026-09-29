@@ -518,7 +518,8 @@ def adsb(ctx: StageContext) -> dict:
                         "adsb_error": "error" in info}}
 
 
-@PIPELINE.stage("color", sections=("color",), requires=("identify",), rev=1, roles=("sky",))
+@PIPELINE.stage("color", sections=("color", "classify.periodic_min_power", "classify.aircraft_f_hz"),
+                requires=("identify",), rev=2, roles=("sky",))
 def color(ctx: StageContext) -> dict:
     """Kolor torów: kalibracja na gwiazdach (B−V), kolor obiektu klatka po klatce, podpowiedź."""
     from .color import SUMMARY_COLS, run

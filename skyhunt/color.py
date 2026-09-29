@@ -501,9 +501,11 @@ def summarize(points: list[dict], calib: ColorCalib | None, ccfg: dict) -> dict:
 
 
 def color_hint(s: dict, *, kind: str, class_hint: str, dur_s: float, sunlit_ref: dict | None,
-               ccfg: dict) -> tuple[str, str]:
+               ccfg: dict, blinking: bool = False) -> tuple[str, str]:
     """Podpowiedź z koloru (zawsze hipoteza) i uzasadnienie liczbowe. Meteor = tor z podpowiedzią
-    „meteor?” (szybki, krótki, prosty) z etapu identify."""
+    „meteor?” (szybki, krótki, prosty) z etapu identify. Światła nawigacyjne tylko przy istotnym
+    miganiu jasności w paśmie samolotów (``blinking``): sam rozrzut koloru słabego obiektu to szum
+    albo machanie skrzydłami."""
     if s["n_color"] == 0:
         why = f"{s['n_saturated']} z {s['n_frames']} klatek prześwietlonych" if s["n_saturated"] else "za słaby sygnał"
         return "brak koloru", why
@@ -525,7 +527,8 @@ def color_hint(s: dict, *, kind: str, class_hint: str, dur_s: float, sunlit_ref:
         if T > float(ccfg["hot_T_K"]):
             return "biało-niebieski → szybki, Ca/Mg?", base + tail
         return "biały/żółty meteor", base + tail
-    if (s["n_color"] >= 3 and math.isfinite(s["rg_spread"]) and s["rg_spread"] > float(ccfg["nav_spread_dex"])
+    if (blinking and s["n_color"] >= int(ccfg.get("nav_min_frames", 20)) and math.isfinite(s["rg_spread"])
+            and s["rg_spread"] > float(ccfg["nav_spread_dex"])
             and math.isfinite(s["chi2"]) and s["chi2"] > float(ccfg["change_chi2"])):
         return "światła nawigacyjne? (czerwone/zielone)", base + f", rozrzut R/G {s['rg_spread']:.2f} dex" + tail
     if sunlit_ref and math.hypot(s["r_g"] - sunlit_ref["r_g"], s["b_g"] - sunlit_ref["b_g"]) <= float(ccfg["sunlit_tol_dex"]):
@@ -582,6 +585,9 @@ def run(outdir: Path, video: Path, meta: VideoMeta, cfg: dict, log_: logging.Log
 
     final = pd.read_parquet(outdir / "tracks_final.parquet")
     tp = pd.read_parquet(outdir / "track_points.parquet")
+    clf = cfg.get("classify", {})
+    per_min = float(clf.get("periodic_min_power", 6.0))
+    a_lo, a_hi = (float(v) for v in clf.get("aircraft_f_hz", (0.4, 2.0)))
     rows, pts_rows, thumbs = [], [], {}
     for _, t in final.iterrows():
         tid = int(t["track_id"])
@@ -596,7 +602,9 @@ def run(outdir: Path, video: Path, meta: VideoMeta, cfg: dict, log_: logging.Log
             continue
         s = summarize(points, calib, ccfg)
         rows.append({"track_id": tid, **s, "_kind": str(t.get("kind", "")), "_hint": str(t.get("class_hint", "")),
-                     "_dur": float(t.get("dur_s", 0.0)), "_sunlit": t.get("sunlit")})
+                     "_dur": float(t.get("dur_s", 0.0)), "_sunlit": t.get("sunlit"),
+                     "_blink": bool(float(t.get("f_power", 0.0) or 0.0) > per_min
+                                    and a_lo <= float(t.get("f_peak_hz", float("nan"))) <= a_hi)})
         pts_rows += [{"track_id": tid, **q} for q in points]
         for f, img in th.items():
             thumbs[f"t{tid}_f{f}"] = img
@@ -616,7 +624,8 @@ def run(outdir: Path, video: Path, meta: VideoMeta, cfg: dict, log_: logging.Log
     info["sunlit_ref"] = sunlit_ref
     for r in rows:
         r["color_hint"], r["color_reason"] = color_hint(
-            r, kind=r["_kind"], class_hint=r["_hint"], dur_s=r["_dur"], sunlit_ref=sunlit_ref, ccfg=ccfg)
+            r, kind=r["_kind"], class_hint=r["_hint"], dur_s=r["_dur"], sunlit_ref=sunlit_ref, ccfg=ccfg,
+            blinking=r["_blink"])
     write_json(outdir / "color_calib.json", info)
     pd.DataFrame([{k: r[k] for k in SUMMARY_COLS} for r in rows], columns=SUMMARY_COLS) \
         .to_csv(outdir / "track_color.csv", index=False)

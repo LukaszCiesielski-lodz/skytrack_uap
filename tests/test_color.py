@@ -101,7 +101,10 @@ def test_color_hints(cfg):
     ref = {"r_g": -0.1, "b_g": -0.3}
     assert h({}, class_hint="satelita?", sunlit_ref=ref) == "oświetlony Słońcem (jak satelity)"
     assert h({"T_eq_K": 2500.0, "r_g": 0.3}, class_hint="bliski obiekt?", sunlit_ref=ref).startswith("ciepły")
-    assert h({"rg_spread": 0.4, "chi2": 20.0}, class_hint="samolot?").startswith("światła nawigacyjne")
+    nav = {"rg_spread": 0.4, "chi2": 20.0, "n_color": 40}
+    assert h(nav, class_hint="samolot?", blinking=True).startswith("światła nawigacyjne")
+    # bez migania rozrzut koloru ciepłego, wolnego obiektu (ptak w łunie) to nie światła samolotu
+    assert h({**nav, "T_eq_K": 2800.0, "r_g": 0.3}, class_hint="bliski obiekt?").startswith("ciepły")
     assert h({}, kind="sat") == "Słońce odbite (odniesienie)"
     assert h({"n_color": 0}) == "brak koloru"
     _, why = C.color_hint({**base, "slope_dex_s": 0.5, "chi2": 10.0}, kind="unid", class_hint="meteor?", dur_s=0.8,

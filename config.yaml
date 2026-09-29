@@ -241,8 +241,11 @@ color:
   hot_T_K: 8000              # meteor gorętszy → szybki, Ca/Mg?
   city_T_K: 3000             # obiekt nie-meteor cieplejszy → łuna miasta (sód)?
   sunlit_tol_dex: 0.05       # odległość od koloru satelitów (Słońce odbite)
-  sunlit_bv_expected: [0.5, 1.0]   # B−V satelitów oczekiwane (kontrola kalibracji)
-  nav_spread_dex: 0.15       # rozrzut log R/G między klatkami: migające światła czerwone/zielone
+  # B−V satelitów oczekiwane (kontrola kalibracji). Satelity są czerwieńsze od Słońca (0,65):
+  # w DSCF4647/4648 wyszło 1,03 i 0,82 przy świetnej kalibracji (RMS 0,05–0,07 dex, liniowość −0,40).
+  sunlit_bv_expected: [0.5, 1.2]
+  nav_spread_dex: 0.15       # rozrzut log R/G między klatkami: migające światła czerwone/zielone…
+  nav_min_frames: 20         # …tylko przy istotnym miganiu jasności w paśmie samolotów i ≥ tylu klatkach
   change_chi2: 3.0           # zmiana koloru: χ² stałości > tyle…
   change_dex: 0.1            # …i zmiana na długości śladu > tyle
   linearity_warn: 0.1        # |nachylenie log G vs mag + 0,4| > tyle → ostrzeżenie (krzywa tonalna)
