@@ -74,6 +74,10 @@ tracks:
   # poniżej weak_snr jest odrzucany (po sklejeniu fragmentów). Krótkie jasne tory zostają.
   weak_min_len: 10
   weak_snr: 7.0
+  # …chyba że detekcje są kreskami wzdłuż ruchu (słaby meteor): σ_wzdłuż ≥ frac·v i ≥ ratio·σ_poprzek.
+  # Kreska w ekspozycji 1/30 s przy 29,97 kl/s: σ ≈ v/√12 ≈ 0,29·v (próg niżej, bo próg detekcji ją skraca).
+  streak_min_along_frac: 0.15
+  streak_min_ratio: 1.5
   merge_gate_px: 15          # sklejanie fragmentów toru
   merge_gap_frames: 60       # ~2 s: jasne obiekty bywają pocięte przerwami 1–1,6 s
   merge_angle_deg: 5

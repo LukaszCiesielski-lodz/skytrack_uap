@@ -6,6 +6,9 @@
   - DSCF4647: tak wyglądało 301 z 334 torów bez dopasowania; DSCF4648: 260 z 286.
   - Wśród 189 zidentyfikowanych satelitów obu części nie było żadnego takiego toru (najsłabszy: 10 punktów, SNR 6,4).
   - Krótkie jasne tory (meteory, błyski) i długie słabe zostają.
+  - Zostają też krótkie słabe tory z detekcjami wydłużonymi wzdłuż ruchu, zgodnie z prędkością (kreska meteoru w ekspozycji 1/30 s; `streak_min_along_frac`, `streak_min_ratio`). Kropki szumu są okrągłe.
+  - Nowe kolumny `along_sigma_px` i `streak_ratio` w `tracks_final`.
+  - Ograniczenie, które zostaje: meteory szybsze niż ~10°/s (> 48 px/klatkę, `init_gate_px`) nie tworzą toru wcale — do osobnego detektora kresek.
 - **Sklejanie fragmentów** do 60 klatek przerwy (było 24). Jasny obiekt #9 w DSCF4647 był pocięty na 4 tory (#9, #19, #23, #27) przerwami 33–48 klatek.
 - **Raport** usuwa stare PDF-y i klipy przed wygenerowaniem nowych (numery torów się zmieniają).
 - `tracks` rev 3: przeliczy się `tracks`, `identify`, `adsb`, `report` (bez ponownej detekcji).

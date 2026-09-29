@@ -177,15 +177,43 @@ def merge_fragments(tracks: list[np.ndarray], frame, x, y, tcfg: dict) -> list[n
     return tracks
 
 
-def drop_weak(tracks: list[np.ndarray], peak_snr: np.ndarray | None, tcfg: dict) -> list[np.ndarray]:
+def streak_shape(frames, x, y, cxx, cxy, cyy) -> tuple[float, float, float]:
+    """(mediana szerokości wzdłuż ruchu [px], w poprzek [px], prędkość [px/klatkę]) z momentów
+    detekcji. Meteor w ekspozycji ~1/fps to kreska wzdłuż ruchu (σ_wzdłuż ≈ v/√12 ⊕ PSF),
+    kropka szumu jest okrągła."""
+    v, _ = _fit(np.asarray(frames), np.asarray(x, float), np.asarray(y, float))
+    speed = float(np.hypot(*v))
+    if speed == 0:
+        return float("nan"), float("nan"), 0.0
+    u = v / speed
+    along = np.sqrt(np.clip(u[0] ** 2 * cxx + 2 * u[0] * u[1] * cxy + u[1] ** 2 * cyy, 0, None))
+    cross = np.sqrt(np.clip(u[1] ** 2 * cxx - 2 * u[0] * u[1] * cxy + u[0] ** 2 * cyy, 0, None))
+    return float(np.median(along)), float(np.median(cross)), speed
+
+
+def drop_weak(tracks: list[np.ndarray], det: dict, tcfg: dict) -> list[np.ndarray]:
     """Odrzuca tory krótkie (< ``weak_min_len`` punktów) i zarazem słabe (mediana SNR maksimum
     < ``weak_snr``): to łańcuchy przypadkowych kropek szumu. W DSCF4647/4648 taki był ~90%
     torów bez dopasowania i żaden zidentyfikowany satelita (najsłabszy: 10 punktów przy SNR 6,4).
-    Krótkie jasne (meteor, błysk) i długie słabe tory zostają."""
+    Krótkie jasne (meteor, błysk) i długie słabe tory zostają. Zostaje też krótki słaby tor
+    o detekcjach wydłużonych wzdłuż ruchu zgodnie z prędkością (słaby meteor): σ_wzdłuż ≥
+    ``streak_min_along_frac``·v i σ_wzdłuż ÷ σ_poprzek ≥ ``streak_min_ratio``."""
     min_len, snr = int(tcfg.get("weak_min_len", 0)), float(tcfg.get("weak_snr", 0.0))
-    if peak_snr is None or min_len <= 0:
+    if "peak_snr" not in det or min_len <= 0:
         return tracks
-    return [t for t in tracks if len(t) >= min_len or float(np.median(peak_snr[t])) >= snr]
+    frac, ratio = float(tcfg.get("streak_min_along_frac", math.inf)), float(tcfg.get("streak_min_ratio", math.inf))
+    keep = []
+    for t in tracks:
+        if len(t) >= min_len or float(np.median(det["peak_snr"][t])) >= snr:
+            keep.append(t)
+            continue
+        f = det["frame"][t]
+        o = np.argsort(f, kind="stable")
+        along, cross, speed = streak_shape(f[o], det["x"][t][o], det["y"][t][o],
+                                           det["cxx"][t][o], det["cxy"][t][o], det["cyy"][t][o])
+        if speed > 0 and along >= frac * speed and along >= ratio * max(cross, 1e-9):
+            keep.append(t)
+    return keep
 
 
 # ---------------------------------------------------------------- pomiary
@@ -245,6 +273,7 @@ def measure_track(frames, x, y, flux, cxx, cxy, cyy, *, fps: float, width: int, 
     nvec = np.array([-v[1], v[0]]) / (speed + 1e-9)
     cross = np.sqrt(np.clip(nvec[0] ** 2 * cxx + 2 * nvec[0] * nvec[1] * cxy + nvec[1] ** 2 * cyy, 0, None))
     f_peak, f_power = periodicity(frames, flux, fps, tcfg)
+    along, across, _ = streak_shape(frames, x, y, cxx, cxy, cyy)
     m = float(tcfg["edge_margin_px"])
 
     def inside(px, py):
@@ -259,6 +288,8 @@ def measure_track(frames, x, y, flux, cxx, cxy, cyy, *, fps: float, width: int, 
         "curv_px": float(np.sqrt(np.mean(resid ** 2))),
         "cross_sigma_px": float(np.median(cross)),
         "cross_ratio": float(np.median(cross) / star_sigma_px) if star_sigma_px else float("nan"),
+        "along_sigma_px": along,                                    # kreska meteoru: ≈ v/√12 ⊕ PSF
+        "streak_ratio": along / across if across > 0 else float("nan"),
         "flux_mean": float(np.mean(flux)), "flux_cv": float(np.std(flux) / (abs(np.mean(flux)) + 1e-9)),
         "f_peak_hz": f_peak, "f_power": f_power,
         "f_alias_hz": float(fps - f_peak) if math.isfinite(f_peak) else float("nan"),
@@ -311,7 +342,7 @@ def build_tracks(det: dict, *, fps: float, width: int, height: int, star_sigma_p
     tracks = [keep[t] for t in tracks]
     tracks = merge_fragments(tracks, frame, x, y, tcfg)
     n_linked = len(tracks)
-    tracks = drop_weak(tracks, det.get("peak_snr"), tcfg)
+    tracks = drop_weak(tracks, det, tcfg)
     tracks.sort(key=lambda t: (frame[t[0]], x[t[0]]))
     rows, pts = [], {k: [] for k in ("track_id", *det.keys())}
     for tid, t in enumerate(tracks, 1):

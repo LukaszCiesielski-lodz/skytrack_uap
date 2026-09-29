@@ -65,15 +65,22 @@ def test_weak_short_dropped_and_long_gap_merged(cfg):
         rows.append((f, 700 + 5 * (f - 60), 500, 20.0))
     for f in [*range(100, 150), *range(190, 240)]:   # D: jasny, przerwa 40 klatek (jak tor #9)
         rows.append((f, 100 + 3 * (f - 100), 600 + (f - 100), 50.0))
-    a = np.array(rows, float)
+    streak = []
+    for f in range(300, 307):                  # E: słaby meteor — 7 kresek 20 px/klatkę, σ wzdłuż 6 px
+        streak.append((f, 100 + 20 * (f - 300), 50, 5.5))
+    a = np.array(rows + streak, float)
     n = len(a)
+    cxx = np.ones(n)
+    cxx[len(rows):] = 36.0
     det = {"frame": a[:, 0].astype(np.int64), "x": a[:, 1], "y": a[:, 2], "flux": np.full(n, 100.0),
            "sum_snr": a[:, 3] * 3, "peak_snr": a[:, 3], "npix": np.full(n, 9.0),
-           "cxx": np.ones(n), "cxy": np.zeros(n), "cyy": np.ones(n)}
+           "cxx": cxx, "cxy": np.zeros(n), "cyy": np.ones(n)}
     out, _, stats = build_tracks(det, fps=30.0, width=1280, height=800, star_sigma_px=1.0,
                                  nominal_hfov_deg=26.4, tcfg=cfg["tracks"])
-    assert sorted((r["frame0"], r["n"]) for r in out) == [(30, 12), (60, 6), (100, 100)]
+    assert sorted((r["frame0"], r["n"]) for r in out) == [(30, 12), (60, 6), (100, 100), (300, 7)]
     assert stats["weak_dropped"] == 1
+    meteor = next(r for r in out if r["frame0"] == 300)
+    assert meteor["along_sigma_px"] == pytest.approx(6.0) and meteor["streak_ratio"] == pytest.approx(6.0)
 
 
 def test_periodicity_and_alias(cfg):
