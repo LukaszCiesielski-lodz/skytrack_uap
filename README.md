@@ -58,6 +58,7 @@ Etap `color` mierzy kolor każdego toru.
 - **Obiekt:** w każdej klatce odejmuję tło z klatek, w których obiekt jest już dalej (gwiazdy i łuna znikają). Liczę tylko klatki nieprześwietlone.
 - **Wynik:** temperatura barwowa `T_eq` (położenie na linii gwiazd), **nadmiar zieleni** (odległość od linii) i zmiana koloru w czasie. Pliki: `color_calib.json`, `track_color.csv`, `track_color_points.parquet`.
 - **Kontrola:** zidentyfikowane satelity to światło Słońca odbite (B−V ≈ 0,6–0,9). Ich średni kolor jest odniesieniem dla innych torów.
+- **Słaba kalibracja:** gdy linia gwiazd jest prawie płaska (nachylenie < `color.min_locus_slope`, oczekiwane ~0,3 dex na 1 mag B−V), kodek zgniótł kolor małych punktów. Wtedy raport nie podaje kelwinów, tylko „cieplejszy/chłodniejszy niż satelity o X dex” (`d_sun_dex`). Tak było w DSCF4651 (0,048 dex/mag). Temperatura poza skalą B−V −0,4…2,5 jest pokazywana jako granica, np. „T ≤ 2725 K (poza skalą)”.
 
 Podpowiedzi (hipotezy, zawsze z liczbami):
 
@@ -72,7 +73,7 @@ Podpowiedzi (hipotezy, zawsze z liczbami):
 
 **Czego RGB nie powie:** kamera ma trzy szerokie pasma, więc składu meteoru (proporcji linii Na / Mg / Fe) nie da się z niej odczytać. Do tego potrzebna jest siatka dyfrakcyjna przed obiektywem (folia 500–1000 linii/mm). Obok meteoru pojawia się wtedy jego widmo.
 
-**Ustawienia aparatu do koloru:** stały balans bieli (światło dzienne albo 5500 K, nie auto), symulacja Standard/Provia bez Color Chrome, nasycenie 0. Jasne obiekty są prześwietlone i nie mają koloru; PDF podaje, ile klatek odrzucono. Nagrania czarno-białe są wykrywane i pomijane.
+**Ustawienia aparatu do koloru:** stały balans bieli (światło dzienne albo 5500 K, nie auto), symulacja Standard/Provia bez Color Chrome, **Kolor +4** (wzmacnia chromę, zanim H.264 ją zgniecie; kalibracja na gwiazdach to przelicza). Jasne obiekty są prześwietlone i nie mają koloru; PDF podaje, ile klatek odrzucono. Nagrania czarno-białe są wykrywane i pomijane.
 
 ### `tracks_final.csv`: tabela wszystkich torów
 
@@ -102,8 +103,9 @@ Plik jest w `out/<plik>/tracks_final.csv`, jeden wiersz na tor. Obok leży ta sa
 | `starts_inside`, `ends_inside` | `False` oznacza, że obiekt wlatuje lub wylatuje przez krawędź kadru; `True` na końcu toru oznacza, że gaśnie w kadrze (np. wejście w cień Ziemi) |
 | `class_hint`, `class_reason` | podpowiedź klasy dla niezidentyfikowanych: `satelita?`, `meteor?`, `samolot?`, `bliski obiekt?` |
 | `along_sigma_px`, `streak_ratio` | kształt śladu w klatce: wydłużenie wzdłuż ruchu (kreska meteoru) i stosunek do szerokości w poprzek |
+| `flock_n` | liczba równoległych torów o podobnej prędkości (przelot ptaków); 0 = brak grupy |
 
-Kolor torów jest w osobnym pliku `track_color.csv` (ten sam `track_id`): `T_eq_K`, `bv_eq`, `green_excess`, `color_hint`, `n_color`, `n_saturated`.
+Kolor torów jest w osobnym pliku `track_color.csv` (ten sam `track_id`): `T_eq_K`, `bv_eq`, `e_bv_eq`, `green_excess`, `d_sun_dex` (kolor względem satelitów, „+” = cieplejszy), `color_hint`, `n_color`, `n_saturated`.
 
 **Przykłady (komórka w Colab).**
 

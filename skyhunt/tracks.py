@@ -332,6 +332,45 @@ def classify_hint(deg_s: float, dur_s: float, curv_px: float, cross_ratio: float
     return "niesklasyfikowany", f"{deg_s:.2f}°/s, krzywizna {curv_px:.1f} px"
 
 
+def flock_groups(track_id, deg_s, x0, y0, x1, y1, ccfg: dict) -> dict[int, tuple[int, float]]:
+    """Przelot ptaków: dla każdego toru liczba torów (z nim samym) o podobnej prędkości kątowej
+    i kierunku w kadrze, leżących na innych liniach (nie fragmenty tego samego obiektu).
+    Zwraca {track_id: (liczność, mediana °/s)} tylko dla grup ≥ ``flock_min_tracks``."""
+    tid = np.asarray(track_id, int)
+    w = np.asarray(deg_s, float)
+    p0 = np.column_stack([np.asarray(x0, float), np.asarray(y0, float)])
+    p1 = np.column_stack([np.asarray(x1, float), np.asarray(y1, float)])
+    lo, hi = (float(v) for v in ccfg.get("flock_deg_s", (1.5, 20.0)))
+    n_min = int(ccfg.get("flock_min_tracks", 3))
+    tol_v = float(ccfg.get("flock_speed_tol", 0.25))
+    tol_a = math.radians(float(ccfg.get("flock_dir_tol_deg", 20.0)))
+    sep = float(ccfg.get("flock_min_sep_px", 40.0))
+    d = p1 - p0
+    length = np.hypot(d[:, 0], d[:, 1])
+    ok = np.isfinite(w) & (w >= lo) & (w <= hi) & (length > 0)
+    ang = np.arctan2(d[:, 1], d[:, 0])
+    mid = (p0 + p1) / 2
+
+    def off_line(j: int, m: int) -> float:
+        """Odległość środka toru j od prostej toru m [px]."""
+        u = d[m] / length[m]
+        return abs((mid[j, 0] - p0[m, 0]) * u[1] - (mid[j, 1] - p0[m, 1]) * u[0])
+
+    out: dict[int, tuple[int, float]] = {}
+    for i in np.flatnonzero(ok):
+        members = [i]
+        for j in np.flatnonzero(ok):
+            if j == i or abs(w[j] / w[i] - 1) > tol_v:
+                continue
+            da = abs((ang[j] - ang[i] + math.pi) % (2 * math.pi) - math.pi)
+            # fragmenty jednego obiektu leżą na jednej prostej: liczą się raz
+            if da <= tol_a and all(off_line(j, m) >= sep for m in members):
+                members.append(j)
+        if len(members) >= n_min:
+            out[int(tid[i])] = (len(members), float(np.median(w[members])))
+    return out
+
+
 def build_tracks(det: dict, *, fps: float, width: int, height: int, star_sigma_px: float | None,
                  nominal_hfov_deg: float, tcfg: dict) -> tuple[list[dict], dict, dict]:
     """Detekcje → (lista torów z pomiarami, punkty torów jako kolumny, statystyki)."""

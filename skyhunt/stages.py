@@ -290,7 +290,7 @@ def tle(ctx: StageContext) -> dict:
 
 @PIPELINE.stage("identify", sections=("identify", "classify", "site", "time", "camera", "satellites.ephemeris_dir",
                                       "report.identified_min_confidence"),
-                requires=("tracks", "astrometry", "tle"), rev=2, roles=("sky",))
+                requires=("tracks", "astrometry", "tle"), rev=3, roles=("sky",))
 def identify(ctx: StageContext) -> dict:
     """Synchronizacja zegara po satelitach, identyfikacja NORAD, tabela końcowa torów."""
     import pandas as pd
@@ -404,6 +404,7 @@ def identify(ctx: StageContext) -> dict:
             "confidence": best.confidence if best else None, "match_reason": best.reason if best else None,
             "sunlit": best.sunlit if best else None,
         })
+    _flock_hints(rows, ccfg)
     final = pd.DataFrame(rows)
     final.to_parquet(ctx.outdir / "tracks_final.parquet", index=False)
     final.to_csv(ctx.outdir / "tracks_final.csv", index=False)
@@ -463,6 +464,32 @@ def identify(ctx: StageContext) -> dict:
                         "predicted_in_fov": len(pred_rows)}}
 
 
+def _flock_hints(rows: list[dict], ccfg: dict) -> None:
+    """Przelot ptaków: niezidentyfikowane tory o wspólnej prędkości i kierunku. „meteor?” zostaje
+    (druga hipoteza w uzasadnieniu), „bliski obiekt?”, „niesklasyfikowany” i „ptak?” → „ptak?”."""
+    from .tracks import flock_groups
+
+    unid = [r for r in rows if r["kind"] == "unid"]
+    for r in rows:
+        r["flock_n"] = 0
+    if not unid:
+        return
+    groups = flock_groups([r["track_id"] for r in unid], [r["omega_deg_s"] for r in unid],
+                          [r["x0"] for r in unid], [r["y0"] for r in unid], [r["x1"] for r in unid],
+                          [r["y1"] for r in unid], ccfg)
+    for r in unid:
+        g = groups.get(int(r["track_id"]))
+        if not g:
+            continue
+        n, v = g
+        r["flock_n"] = n
+        why = f"przelot: {n} torów równolegle, ~{v:.1f}°/s"
+        if r["class_hint"] == "meteor?":
+            r["class_reason"] = f"albo ptak ({why}); {r['class_reason']}"   # raport skraca uzasadnienie
+        elif r["class_hint"] in ("bliski obiekt?", "niesklasyfikowany", "ptak?"):
+            r["class_hint"], r["class_reason"] = "ptak?", f"{why}; {r['class_reason']}"
+
+
 @PIPELINE.stage("adsb", sections=("adsb", "site"), requires=("identify",), rev=1, roles=("sky",))
 def adsb(ctx: StageContext) -> dict:
     """Niezidentyfikowane tory vs trasy samolotów z historii ADS-B (adsb.lol)."""
@@ -519,7 +546,7 @@ def adsb(ctx: StageContext) -> dict:
 
 
 @PIPELINE.stage("color", sections=("color", "classify.periodic_min_power", "classify.aircraft_f_hz"),
-                requires=("identify",), rev=2, roles=("sky",))
+                requires=("identify",), rev=3, roles=("sky",))
 def color(ctx: StageContext) -> dict:
     """Kolor torów: kalibracja na gwiazdach (B−V), kolor obiektu klatka po klatce, podpowiedź."""
     from .color import SUMMARY_COLS, run
@@ -535,8 +562,8 @@ def color(ctx: StageContext) -> dict:
         return {"outputs": ["color_calib.json", "track_color.csv"], "metrics": {"color_error": True}}
 
 
-@PIPELINE.stage("report", sections=("report", "iod", "classify.periodic_min_power"),
-                requires=("identify", "adsb", "color"), rev=3, roles=("sky",))
+@PIPELINE.stage("report", sections=("report", "iod", "classify.periodic_min_power", "identify.reference"),
+                requires=("identify", "adsb", "color"), rev=4, roles=("sky",))
 def report(ctx: StageContext) -> dict:
     import pandas as pd
 

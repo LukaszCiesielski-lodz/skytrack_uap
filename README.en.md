@@ -58,6 +58,7 @@ The `color` stage measures the color of every track.
 - **Object:** in each frame I subtract the background taken from frames in which the object has already moved away (stars and sky glow cancel out). Only non-saturated frames are used.
 - **Result:** color temperature `T_eq` (position along the stellar locus), **green excess** (distance from the locus) and color change over time. Files: `color_calib.json`, `track_color.csv`, `track_color_points.parquet`.
 - **Check:** identified satellites are reflected sunlight (B−V ≈ 0.6–0.9). Their mean color is the reference for other tracks.
+- **Weak calibration:** when the stellar locus is nearly flat (slope < `color.min_locus_slope`, expected ~0.3 dex per 1 mag B−V), the codec has crushed the color of small points. The report then gives no kelvins, only "warmer/cooler than the satellites by X dex" (`d_sun_dex`). This happened in DSCF4651 (0.048 dex/mag). A temperature outside the B−V range −0.4…2.5 is shown as a limit, e.g. "T ≤ 2725 K (off scale)".
 
 Hints (hypotheses, always with numbers):
 
@@ -72,7 +73,7 @@ Hints (hypotheses, always with numbers):
 
 **What RGB cannot tell you:** the camera has three broad bands, so the composition of a meteor (the ratios of the Na / Mg / Fe lines) cannot be read from it. That requires a diffraction grating in front of the lens (500–1000 lines/mm film). The meteor's spectrum then appears next to it.
 
-**Camera settings for color:** fixed white balance (daylight or 5500 K, not auto), Standard/Provia film simulation without Color Chrome, saturation 0. Bright objects are saturated and have no color; the PDF states how many frames were rejected. Black-and-white recordings are detected and skipped.
+**Camera settings for color:** fixed white balance (daylight or 5500 K, not auto), Standard/Provia film simulation without Color Chrome, **Color +4** (boosts chroma before H.264 crushes it; the star calibration takes it into account). Bright objects are saturated and have no color; the PDF states how many frames were rejected. Black-and-white recordings are detected and skipped.
 
 ### `tracks_final.csv`: table of all tracks
 
@@ -102,8 +103,9 @@ The file is in `out/<file>/tracks_final.csv`, one row per track. The same table 
 | `starts_inside`, `ends_inside` | `False` means the object enters or leaves through the frame edge; `True` at the end of the track means it fades inside the frame (e.g. entering Earth's shadow) |
 | `class_hint`, `class_reason` | class hint for unidentified tracks: `satelita?` (satellite?), `meteor?`, `samolot?` (aircraft?), `bliski obiekt?` (nearby object?) |
 | `along_sigma_px`, `streak_ratio` | shape of the trace within a frame: elongation along the motion (meteor streak) and its ratio to the cross-track width |
+| `flock_n` | number of parallel tracks with similar speed (bird migration); 0 = no group |
 
-Track colors are in a separate file `track_color.csv` (same `track_id`): `T_eq_K`, `bv_eq`, `green_excess`, `color_hint`, `n_color`, `n_saturated`.
+Track colors are in a separate file `track_color.csv` (same `track_id`): `T_eq_K`, `bv_eq`, `e_bv_eq`, `green_excess`, `d_sun_dex` (color relative to the satellites, "+" = warmer), `color_hint`, `n_color`, `n_saturated`.
 
 **Examples (Colab cell).**
 

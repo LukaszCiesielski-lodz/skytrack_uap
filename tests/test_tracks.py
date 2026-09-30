@@ -4,7 +4,7 @@ import pytest
 
 pytest.importorskip("scipy")
 
-from skyhunt.tracks import build_tracks, classify_hint, periodicity, static_mask  # noqa: E402
+from skyhunt.tracks import build_tracks, classify_hint, flock_groups, periodicity, static_mask  # noqa: E402
 
 FPS = 24.0
 
@@ -118,3 +118,20 @@ def test_classify_hint(cfg):
     # tor #58 z DSCF4641 (STARLINK-2112): prosty, 0,77°/s, szeroki tylko przez prześwietlenie
     assert classify_hint(0.77, 7.8, 0.5, 2.46, 5.0, 3, FPS, c)[0] == "bliski obiekt?"
     assert classify_hint(0.77, 7.8, 0.5, 2.46, 5.0, 3, FPS, c, peak_snr=200.0)[0] == "satelita?"
+
+
+def test_flock_groups_parallel_tracks(cfg):
+    """Przelot ptaków: 3 równoległe tory ~2°/s na różnych liniach + fragment jednego z nich;
+    wolny tor (satelita) i tor prostopadły nie należą do grupy."""
+    cc = cfg["classify"]
+    tid = [1, 2, 3, 4, 5, 6]
+    deg_s = [2.0, 1.9, 2.1, 2.0, 0.6, 2.0]
+    x0 = [100, 100, 100, 1500, 100, 2000]
+    y0 = [500, 800, 1100, 505, 300, 100]
+    x1 = [1200, 1200, 1200, 2500, 1200, 2000]
+    y1 = [520, 820, 1120, 525, 320, 1500]
+    g = flock_groups(tid, deg_s, x0, y0, x1, y1, cc)
+    assert set(g) == {1, 2, 3, 4}
+    assert g[1][0] == 3 and g[4][0] == 3          # fragment #4 leży na linii #1: liczy się raz
+    assert g[2][1] == pytest.approx(2.0, abs=0.1)
+    assert flock_groups(tid[:2], deg_s[:2], x0[:2], y0[:2], x1[:2], y1[:2], cc) == {}

@@ -17,6 +17,7 @@ from pathlib import Path
 import numpy as np
 
 from .clips import extract_frames, filmstrip, plan_clip, positions_at, stretch_stack, write_annotated_mp4
+from .color import BV_MAX, BV_MIN, kelvin_text
 from .io import read_json
 from .metadata import VideoMeta
 from .sky import _world2pix, constellation_overlay, named_stars_overlay, project_polyline, field_center
@@ -268,12 +269,16 @@ def _color_params(c) -> list[tuple[str, str]]:
     if int(c["n_color"]) == 0:
         return [("Kolor", f"brak ({c['color_reason']})"[:60])]
     T = float(c["T_eq_K"])
-    col = (f"{T:.0f} K / B−V {float(c['bv_eq']):.2f}" if math.isfinite(T)
+    col = (kelvin_text(float(c["bv_eq"]), _num(c, "e_bv_eq")) if math.isfinite(T)
            else f"R/G {float(c['r_g']):+.2f} B/G {float(c['b_g']):+.2f} dex")
-    return [("Kolor: T_eq / B−V", col),
-            ("Nadmiar zieleni", _fmt(float(c["green_excess"]), "+.2f", " dex")),
-            ("Kolor – podpowiedź", str(c["color_hint"])[:42]),
-            ("Klatki koloru (prześw.)", f"{int(c['n_color'])} z {int(c['n_frames'])} ({int(c['n_saturated'])})")]
+    d = _num(c, "d_sun_dex")
+    rows = [("Kolor: T_eq / B−V", col)]
+    if math.isfinite(d):
+        rows.append(("Kolor vs satelity", f"{'cieplejszy' if d > 0 else 'chłodniejszy'} o {abs(d):.2f} dex"))
+    return rows + [
+        ("Nadmiar zieleni", _fmt(float(c["green_excess"]), "+.2f", " dex")),
+        ("Kolor – podpowiedź", str(c["color_hint"])[:42]),
+        ("Klatki koloru (prześw.)", f"{int(c['n_color'])} z {int(c['n_frames'])} ({int(c['n_saturated'])})")]
 
 
 def _color_short(c) -> str:
@@ -281,8 +286,25 @@ def _color_short(c) -> str:
         return ""
     if int(c["n_color"]) == 0:
         return "–"
-    T = float(c["T_eq_K"])
-    return (f"{T:.0f} K " if math.isfinite(T) else "") + str(c["color_hint"])[:24]
+    T, bv = float(c["T_eq_K"]), float(c["bv_eq"])
+    if not math.isfinite(T):
+        t = ""
+    elif bv >= BV_MAX:
+        t = f"≤{T:.0f} K "
+    elif bv <= BV_MIN:
+        t = f"≥{T:.0f} K "
+    else:
+        t = f"{T:.0f} K "
+    return t + str(c["color_hint"])[:18]
+
+
+def _num(c, key: str) -> float:
+    """Liczba z wiersza koloru; brak kolumny (starsze wyniki) albo pusta → NaN."""
+    try:
+        v = float(c[key])
+    except (KeyError, TypeError, ValueError):
+        return float("nan")
+    return v
 
 
 def _color_summary_lines(ci: dict, colors: dict) -> list[str]:
@@ -303,12 +325,18 @@ def _color_summary_lines(ci: dict, colors: dict) -> list[str]:
                   f"RMS: {ci['rms_dex']:.3f} dex",
                   f"Liniowość (log G vs mag): {_fmt(ci.get('linearity_slope'), '+.2f')}  (oczekiwane −0,40)",
                   f"Dryf balansu bieli między epokami: {ci.get('wb_drift_dex') or 0:.3f} dex"]
+        slope = math.hypot(float(ci["br"]), float(ci["bb"]))
+        lines.append(f"Nachylenie linii gwiazd: {slope:.3f} dex na 1 mag B−V (oczekiwane ~0,3)")
+        if ci.get("weak"):
+            lines += [f"UWAGA: linia prawie płaska — B−V pojedynczej gwiazdy niepewne o ±{ci['rms_dex'] / slope:.1f} mag.",
+                      "Kodek (H.264, chroma 4:2:0) zgniótł kolor małych punktów. Temperatury w K są niewiarygodne;",
+                      "podpowiedzi porównują kolor torów z satelitami (w dex). Pomaga: Kolor +4 w aparacie."]
     else:
         lines.append(f"Za mało gwiazd do kalibracji ({ci.get('n_candidates', 0)}): kolor bez przeliczenia na B−V.")
     sr = ci.get("sunlit_ref")
     if sr:
         lines.append(f"Satelity (Słońce odbite, {sr['n']}): log R/G {sr['r_g']:+.3f}, log B/G {sr['b_g']:+.3f}"
-                     + (f", B−V {sr['bv_eq']:.2f}, T {sr['T_eq_K']:.0f} K" if sr.get("bv_eq") is not None else ""))
+                     + (f", {kelvin_text(float(sr['bv_eq']))}" if sr.get("bv_eq") is not None else ""))
     n_col = sum(1 for c in colors.values() if int(c["n_color"]) > 0)
     lines += ["", f"Torów z kolorem: {n_col} z {len(colors)}",
               "",
@@ -448,6 +476,8 @@ def build(outdir: Path, video: Path, meta: VideoMeta, cfg: dict) -> list[str]:
         calib_line = (f"Kalibracja: {col_info['n_stars']} gwiazd, RMS {col_info['rms_dex']:.3f} dex, "
                       f"dryf balansu bieli {col_info.get('wb_drift_dex') or 0:.3f} dex, "
                       f"liniowość {_fmt(col_info.get('linearity_slope'), '+.2f')} (oczek. −0,40)")
+        if col_info.get("weak"):
+            calib_line += " — linia gwiazd prawie płaska: temperatury w K niewiarygodne, kolor względem satelitów"
     periodic_min = float(cfg.get("classify", {}).get("periodic_min_power", 6.0))
     hint = cfg.get("astrometry", {}).get("hint_star")
     always = list(rcfg.get("always_label") or []) + ([hint] if hint else [])
@@ -635,7 +665,11 @@ def build(outdir: Path, video: Path, meta: VideoMeta, cfg: dict) -> list[str]:
     notes = [
         "• Detektor klasyczny per klatka (próg SNR w configu). Obiekty wolniejsze niż ~0,1 px/klatkę",
         "  (MEO/GEO) trafiają do modelu tła i nie są tu wykrywane — przyjdą z shift-and-stack.",
-        "• Czas: poprawka zegara z pierwszego zidentyfikowanego satelity, potwierdzona zgodnością innych torów.",
+        ("• Czas: poprawka zegara = mediana δ zgodnych satelitów (każdy raz); pierwszy zidentyfikowany"
+         if str(cfg.get("identify", {}).get("reference", "median")) == "median"
+         else "• Czas: poprawka zegara z pierwszego zidentyfikowanego satelity, potwierdzona zgodnością innych torów."),
+        *(["  satelita jest pokazany jako odniesienie."]
+          if str(cfg.get("identify", {}).get("reference", "median")) == "median" else []),
         "• „Niezidentyfikowany” = brak dopasowania w użytym katalogu; to nie jest anomalia.",
         "  Kryteria anomalii (zamrożone w configu) dojdą w kolejnym etapie.",
         "• Jedna kamera nie daje odległości ani prędkości liniowej obiektów ostrych.",

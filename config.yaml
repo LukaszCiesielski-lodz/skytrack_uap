@@ -100,6 +100,15 @@ classify:
   bird_f_hz: [2.0, 15.0]
   bird_deg_s: [0.5, 20.0]
   satellite_deg_s: [0.05, 1.8]
+  # Przelot ptaków (nocna migracja): ≥ flock_min_tracks niezidentyfikowanych torów o podobnej
+  # prędkości i kierunku, na różnych liniach (nie fragmenty jednego toru). Szybszych niż LEO,
+  # więc pociąg Starlinków się nie łapie. „meteor?” zostaje meteorem — dostaje tylko drugą hipotezę.
+  # DSCF4651: 7 torów 1,8–2,05°/s, wszystkie ze wschodu na zachód, ciepłe (łuna miasta).
+  flock_min_tracks: 3
+  flock_deg_s: [1.5, 20.0]
+  flock_speed_tol: 0.25      # |ω_j/ω_i − 1|
+  flock_dir_tol_deg: 20
+  flock_min_sep_px: 40       # środek innego toru co najmniej tyle od linii toru (inny obiekt)
 
 darkstats:
   hot_min_frac: 0.2          # piksel „gorący”, jeśli wykryty w ≥ tej części klatek
@@ -227,9 +236,11 @@ color:
   calib_epochs: 3            # epoki do kalibracji na gwiazdach (per epoka: dryf balansu bieli)
   calib_frames: 15           # mediana tylu klatek wokół epoki
   calib_max_mag: 6.0
-  isolation_px: 15           # bez innej gwiazdy katalogowej bliżej
-  aperture_px: 4             # promień apertury (chroma 4:2:0 ma połowę rozdzielczości)
-  annulus_px: [7, 11]
+  isolation_px: 18           # bez innej gwiazdy katalogowej bliżej
+  # Promień apertury: chroma 4:2:0 ma połowę rozdzielczości, a H.264 dodatkowo ją rozmywa —
+  # przy 4 px (DSCF4651) kolor gwiazd był ~8× słabszy od oczekiwanego. Gwiazdy i tory tą samą aperturą.
+  aperture_px: 6
+  annulus_px: [9, 14]
   sat_level: 0.98            # kanał ≥ tyle (0…1) = prześwietlony, klatka bez koloru
   min_stars: 15
   min_snr: 5                 # SNR kanału G w klatce toru
@@ -252,6 +263,9 @@ color:
   nav_min_frames: 20         # …tylko przy istotnym miganiu jasności w paśmie samolotów i ≥ tylu klatkach
   change_chi2: 3.0           # zmiana koloru: χ² stałości > tyle…
   change_dex: 0.1            # …i zmiana na długości śladu > tyle
+  # Nachylenie linii gwiazd √(b_R² + b_B²) [dex na mag B−V]; oczekiwane ~0,3. Poniżej progu kolor
+  # prawie nie zależy od B−V (kodek zgniótł chromę): bez kelwinów, tylko porównanie z satelitami w dex.
+  min_locus_slope: 0.1
   linearity_warn: 0.1        # |nachylenie log G vs mag + 0,4| > tyle → ostrzeżenie (krzywa tonalna)
   wb_drift_warn: 0.03        # dryf linii gwiazd między epokami [dex] → ostrzeżenie o balansie bieli
 

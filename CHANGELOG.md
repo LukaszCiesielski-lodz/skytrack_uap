@@ -1,5 +1,14 @@
 # CHANGELOG
 
+## Przelot ptaków, słaba kalibracja koloru — 2026-09-30
+
+Po DSCF4651 (29.09.2026):
+- **Przelot ptaków** (`classify.flock_*`): ≥ 3 niezidentyfikowane tory o podobnej prędkości (±25%) i kierunku (±20°), na różnych liniach, szybsze niż LEO (≥ 1,5°/s). „Bliski obiekt?” / „niesklasyfikowany” → „ptak?” z uzasadnieniem „przelot: N torów równolegle”. „Meteor?” zostaje meteorem, dostaje tylko drugą hipotezę. Nowa kolumna `flock_n`. W DSCF4651 7 torów 1,8–2,05°/s, wszystkie ze wschodu na zachód, ciepłe: nocna migracja oświetlona łuną; trzy z nich dostały wcześniej „meteor?”. `identify` rev 3.
+- **Słaba kalibracja koloru** (`color.min_locus_slope: 0.1`): linia gwiazd w DSCF4651 miała nachylenie 0,048 dex/mag B−V (oczekiwane ~0,3), więc B−V gwiazdy było niepewne o ±1,2 mag. Wtedy podpowiedzi porównują kolor z satelitami (`d_sun_dex`, „cieplejszy/chłodniejszy niż satelity o X dex”) zamiast kelwinów, a próg nadmiaru zieleni rośnie do RMS linii. Ostrzeżenie w logu i na stronie kalibracji.
+- **T_eq:** niepewność `e_bv_eq` (pomiar ⊕ rozrzut gwiazd / nachylenie); poza skalą B−V −0,4…2,5 raport pisze „T ≤ 2725 K (poza skalą)” zamiast udawanego pomiaru.
+- **Apertura koloru** 4 → 6 px, pierścień [9, 14], izolacja 18 px: chroma 4:2:0 po H.264 jest rozmyta szerzej niż jasność. `color` rev 3.
+- Raport: strona ograniczeń opisuje poprawkę zegara z mediany (było: „z pierwszego satelity”); krótsza podpowiedź w kolumnie „kolor”. `report` rev 4.
+
 ## Poprawka zegara z mediany satelitów — 2026-09-29
 
 - `identify.reference: median` (decyzja użytkownika): Δ = mediana δ zgodnych satelitów, każdy NORAD raz, bez classfd przy ≥ 3 publicznych; σ = 1,2533·σ_MAD/√n (obejmuje błędy elementów wzdłuż orbity).

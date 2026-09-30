@@ -167,10 +167,25 @@ def _is_false(v) -> bool:
 
 # ---------------------------------------------------------------- kalibracja na gwiazdach
 
+BV_MIN, BV_MAX = -0.4, 2.5          # zakres skali T_eq; poza nim T to tylko granica (≥ / ≤)
+
+
 def bv_to_kelvin(bv):
     """B−V → temperatura [K] (Ballesteros 2012)."""
     bv = np.asarray(bv, float)
     return 4600.0 * (1.0 / (0.92 * bv + 1.7) + 1.0 / (0.92 * bv + 0.62))
+
+
+def kelvin_text(bv: float, e_bv: float = float("nan")) -> str:
+    """„T≈4300 K (B−V 1.18 ± 0.40)”; poza skalą „T ≤ 2725 K (poza skalą)”."""
+    if not math.isfinite(bv):
+        return "–"
+    if bv >= BV_MAX:
+        return f"T ≤ {bv_to_kelvin(BV_MAX):.0f} K (poza skalą)"
+    if bv <= BV_MIN:
+        return f"T ≥ {bv_to_kelvin(BV_MIN):.0f} K (poza skalą)"
+    err = f" ± {e_bv:.2f}" if math.isfinite(e_bv) else ""
+    return f"T≈{bv_to_kelvin(bv):.0f} K (B−V {bv:.2f}{err})"
 
 
 @dataclass
@@ -186,6 +201,22 @@ class ColorCalib:
     def locus(self, bv):
         bv = np.asarray(bv, float)
         return self.ar + self.br * bv, self.ab + self.bb * bv
+
+    @property
+    def slope(self) -> float:
+        """Zmiana koloru na 1 mag B−V wzdłuż linii gwiazd [dex/mag]."""
+        return math.hypot(self.br, self.bb)
+
+    def along(self, d_rg, d_bg):
+        """Przesunięcie koloru wzdłuż linii gwiazd [dex]; „+” = czerwieńszy (większe B−V)."""
+        return (np.asarray(d_rg, float) * self.br + np.asarray(d_bg, float) * self.bb) / max(self.slope, 1e-9)
+
+    def bv_error(self, e_rg: float, e_bg: float) -> float:
+        """Niepewność B−V: pomiar toru ⊕ rozrzut gwiazd wokół linii (RMS), przez nachylenie."""
+        d2 = max(self.br ** 2 + self.bb ** 2, 1e-12)
+        stat = math.hypot(self.br * e_rg, self.bb * e_bg) / d2
+        syst = self.rms / math.sqrt(d2) if math.isfinite(self.rms) else 0.0
+        return math.hypot(stat, syst)
 
     def project(self, r_g, b_g) -> tuple[np.ndarray, np.ndarray]:
         """(bv_eq, green_excess): rzut na linię gwiazd i odległość od niej [dex], „+” = zieleńszy
@@ -473,7 +504,8 @@ def summarize(points: list[dict], calib: ColorCalib | None, ccfg: dict) -> dict:
     """Średnie ważone koloru z klatek nieprześwietlonych o SNR ≥ ``min_snr``, zmiana w czasie."""
     out = {"n_frames": len(points), "n_saturated": sum(1 for p in points if p["saturated"]), "n_color": 0,
            "r_g": float("nan"), "b_g": float("nan"), "e_r_g": float("nan"), "e_b_g": float("nan"),
-           "bv_eq": float("nan"), "T_eq_K": float("nan"), "green_excess": float("nan"),
+           "bv_eq": float("nan"), "e_bv_eq": float("nan"), "T_eq_K": float("nan"), "green_excess": float("nan"),
+           "d_sun_dex": float("nan"),
            "slope_dex_s": float("nan"), "chi2": float("nan"), "rg_spread": float("nan")}
     use = [p for p in points if not p["saturated"] and p["snr"] >= float(ccfg["min_snr"])
            and math.isfinite(p["r_g"]) and math.isfinite(p["b_g"])]
@@ -496,25 +528,34 @@ def summarize(points: list[dict], calib: ColorCalib | None, ccfg: dict) -> dict:
     if calib:
         bv, ge = calib.project(out["r_g"], out["b_g"])
         out["bv_eq"], out["green_excess"] = float(bv), float(ge)
-        out["T_eq_K"] = float(bv_to_kelvin(np.clip(bv, -0.4, 2.5)))
+        out["e_bv_eq"] = calib.bv_error(out["e_r_g"], out["e_b_g"])
+        out["T_eq_K"] = float(bv_to_kelvin(np.clip(bv, BV_MIN, BV_MAX)))
     return out
 
 
 def color_hint(s: dict, *, kind: str, class_hint: str, dur_s: float, sunlit_ref: dict | None,
-               ccfg: dict, blinking: bool = False) -> tuple[str, str]:
+               ccfg: dict, blinking: bool = False, weak: bool = False,
+               green_thr: float | None = None) -> tuple[str, str]:
     """Podpowiedź z koloru (zawsze hipoteza) i uzasadnienie liczbowe. Meteor = tor z podpowiedzią
     „meteor?” (szybki, krótki, prosty) z etapu identify. Światła nawigacyjne tylko przy istotnym
     miganiu jasności w paśmie samolotów (``blinking``): sam rozrzut koloru słabego obiektu to szum
-    albo machanie skrzydłami."""
+    albo machanie skrzydłami. ``weak``: płaska linia gwiazd — zamiast kelwinów przesunięcie koloru
+    względem satelitów (``d_sun_dex``), bo B−V z takiej kalibracji to głównie szum."""
     if s["n_color"] == 0:
         why = f"{s['n_saturated']} z {s['n_frames']} klatek prześwietlonych" if s["n_saturated"] else "za słaby sygnał"
         return "brak koloru", why
     T, ge = s["T_eq_K"], s["green_excess"]
-    base = (f"T≈{T:.0f} K, B−V≈{s['bv_eq']:.2f}, nadmiar zieleni {ge:+.2f} dex" if math.isfinite(T)
-            else f"log R/G {s['r_g']:+.2f}, log B/G {s['b_g']:+.2f} (bez kalibracji)")
+    g_thr = float(ccfg["green_thr"]) if green_thr is None else float(green_thr)
     change = (math.isfinite(s["slope_dex_s"]) and math.isfinite(s["chi2"]) and s["chi2"] > float(ccfg["change_chi2"])
               and s["slope_dex_s"] * max(dur_s, 1e-3) > float(ccfg["change_dex"]))
     tail = "; zmiana koloru wzdłuż śladu" if change else ""
+    d_sun = s.get("d_sun_dex", float("nan"))
+    if weak and math.isfinite(T) and d_sun is not None and math.isfinite(d_sun):
+        return _hint_vs_satellites(s, kind, class_hint, d_sun, g_thr, ccfg, blinking, tail)
+    base = (f"{kelvin_text(s['bv_eq'], s.get('e_bv_eq', float('nan')))}, nadmiar zieleni {ge:+.2f} dex"
+            if math.isfinite(T) else f"log R/G {s['r_g']:+.2f}, log B/G {s['b_g']:+.2f} (bez kalibracji)")
+    if weak and math.isfinite(T):
+        base += " (kalibracja słaba)"
     if not math.isfinite(T):
         return "kolor bez kalibracji", base + tail
     if kind == "sat":
@@ -540,10 +581,41 @@ def color_hint(s: dict, *, kind: str, class_hint: str, dur_s: float, sunlit_ref:
     return "kolor nietypowy dla Słońca", base + tail
 
 
+def _hint_vs_satellites(s: dict, kind: str, class_hint: str, d_sun: float, g_thr: float, ccfg: dict,
+                        blinking: bool, tail: str) -> tuple[str, str]:
+    """Podpowiedź przy słabej kalibracji: kolor względem satelitów (Słońce odbite), w dex."""
+    tol = float(ccfg["sunlit_tol_dex"])
+    ge = s["green_excess"]
+    word = "cieplejszy" if d_sun > 0 else "chłodniejszy"
+    base = (f"{word} niż satelity o {abs(d_sun):.2f} dex, nadmiar zieleni {ge:+.2f} dex "
+            f"(kalibracja słaba: bez kelwinów)")
+    if kind == "sat":
+        return "Słońce odbite (odniesienie)", base + tail
+    if class_hint == "meteor?":
+        if ge > g_thr:
+            return "zielony nadmiar → Mg / O 557,7 nm?", base + tail
+        if d_sun > tol:
+            return "cieplejszy niż Słońce → Na/Fe?", base + tail
+        if d_sun < -tol:
+            return "chłodniejszy niż Słońce → szybki, Ca/Mg?", base + tail
+        return "biały/żółty meteor", base + tail
+    if (blinking and s["n_color"] >= int(ccfg.get("nav_min_frames", 20)) and math.isfinite(s["rg_spread"])
+            and s["rg_spread"] > float(ccfg["nav_spread_dex"])
+            and math.isfinite(s["chi2"]) and s["chi2"] > float(ccfg["change_chi2"])):
+        return "światła nawigacyjne? (czerwone/zielone)", base + f", rozrzut R/G {s['rg_spread']:.2f} dex" + tail
+    if abs(d_sun) <= tol and abs(ge) <= g_thr:
+        return "oświetlony Słońcem (jak satelity)", base + tail
+    if d_sun > tol:
+        return "cieplejszy niż satelity → łuna miasta?", base + tail
+    if ge > g_thr:
+        return "zielony nadmiar (światło zielone?)", base + tail
+    return "kolor nietypowy dla Słońca", base + tail
+
+
 # ---------------------------------------------------------------- etap
 
-SUMMARY_COLS = ["track_id", "n_frames", "n_saturated", "n_color", "r_g", "b_g", "e_r_g", "e_b_g", "bv_eq", "T_eq_K",
-                "green_excess", "slope_dex_s", "chi2", "rg_spread", "color_hint", "color_reason"]
+SUMMARY_COLS = ["track_id", "n_frames", "n_saturated", "n_color", "r_g", "b_g", "e_r_g", "e_b_g", "bv_eq", "e_bv_eq",
+                "T_eq_K", "green_excess", "d_sun_dex", "slope_dex_s", "chi2", "rg_spread", "color_hint", "color_reason"]
 
 
 def run(outdir: Path, video: Path, meta: VideoMeta, cfg: dict, log_: logging.Logger | None = None) -> dict:
@@ -582,6 +654,12 @@ def run(outdir: Path, video: Path, meta: VideoMeta, cfg: dict, log_: logging.Log
         if info.get("wb_drift_dex", 0.0) > float(ccfg["wb_drift_warn"]):
             lg.warning("[%s] kolor: balans bieli zmieniał się w trakcie nagrania (%.3f dex) — ustaw stały WB w aparacie",
                        name, info["wb_drift_dex"])
+        info["locus_slope_dex_mag"] = calib.slope
+        info["weak"] = calib.slope < float(ccfg.get("min_locus_slope", 0.0))
+        if info["weak"]:
+            lg.warning("[%s] kolor: linia gwiazd prawie płaska (%.3f dex/mag B−V, oczek. ~0,3) — kodek zgniótł "
+                       "chromę; kolor tylko względem satelitów, bez kelwinów", name, calib.slope)
+    weak = bool(info.get("weak"))
 
     final = pd.read_parquet(outdir / "tracks_final.parquet")
     tp = pd.read_parquet(outdir / "track_points.parquet")
@@ -616,16 +694,22 @@ def run(outdir: Path, video: Path, meta: VideoMeta, cfg: dict, log_: logging.Log
                       "b_g": float(np.median([r["b_g"] for r in ref_rows])), "n": len(ref_rows)}
         if calib:
             bv, ge = calib.project(sunlit_ref["r_g"], sunlit_ref["b_g"])
-            sunlit_ref.update(bv_eq=float(bv), green_excess=float(ge), T_eq_K=float(bv_to_kelvin(np.clip(bv, -0.4, 2.5))))
+            sunlit_ref.update(bv_eq=float(bv), green_excess=float(ge),
+                              T_eq_K=float(bv_to_kelvin(np.clip(bv, BV_MIN, BV_MAX))))
+            for r in rows:
+                if r["n_color"] > 0:
+                    r["d_sun_dex"] = float(calib.along(r["r_g"] - sunlit_ref["r_g"], r["b_g"] - sunlit_ref["b_g"]))
             lo, hi = ccfg["sunlit_bv_expected"]
-            if not float(lo) <= bv <= float(hi):
+            if not weak and not float(lo) <= bv <= float(hi):
                 lg.warning("[%s] kolor: satelity (Słońce odbite) mają B−V %.2f poza oczekiwanym %.1f–%.1f — "
                            "kalibracja koloru niepewna", name, bv, float(lo), float(hi))
     info["sunlit_ref"] = sunlit_ref
+    # przy słabej kalibracji nadmiar zieleni musi przewyższyć rozrzut gwiazd wokół linii
+    g_thr = max(float(ccfg["green_thr"]), calib.rms) if (weak and calib) else None
     for r in rows:
         r["color_hint"], r["color_reason"] = color_hint(
             r, kind=r["_kind"], class_hint=r["_hint"], dur_s=r["_dur"], sunlit_ref=sunlit_ref, ccfg=ccfg,
-            blinking=r["_blink"])
+            blinking=r["_blink"], weak=weak, green_thr=g_thr)
     write_json(outdir / "color_calib.json", info)
     pd.DataFrame([{k: r[k] for k in SUMMARY_COLS} for r in rows], columns=SUMMARY_COLS) \
         .to_csv(outdir / "track_color.csv", index=False)
@@ -639,6 +723,7 @@ def run(outdir: Path, video: Path, meta: VideoMeta, cfg: dict, log_: logging.Log
                         "track_color_thumbs.npz"],
             "metrics": {"monochrome": False, "stars": calib.n if calib else 0,
                         "calib_rms_dex": calib.rms if calib else None,
+                        "locus_slope": calib.slope if calib else None, "weak_calib": weak,
                         "linearity_slope": info.get("linearity_slope"), "wb_drift_dex": info.get("wb_drift_dex"),
                         "tracks_colored": n_col,
                         "sunlit_bv": sunlit_ref.get("bv_eq") if sunlit_ref else None}}

@@ -119,3 +119,34 @@ def test_crop_box_even_and_inside():
     x0, y0, w, h = C.crop_box([3835.0], [2158.0], 10, 3840, 2160)
     assert x0 + w <= 3840 and y0 + h <= 2160
     assert math.isfinite(float(w))
+
+
+def test_kelvin_text_clamp_and_bv_error():
+    assert C.kelvin_text(3.0).startswith("T ≤ 2725 K")
+    assert C.kelvin_text(-1.0).startswith("T ≥")
+    assert "± 0.30" in C.kelvin_text(0.65, 0.3) and "5" in C.kelvin_text(0.65)
+    cal = C.ColorCalib(0.049, 0.033, 0.088, -0.035, 0.058, 179)          # DSCF4651: linia prawie płaska
+    assert cal.slope == pytest.approx(0.048, abs=0.001)
+    assert cal.bv_error(0.0, 0.0) == pytest.approx(0.058 / 0.048, rel=0.01)
+    x, y = cal.locus(1.0)
+    assert cal.along(*(np.array(cal.locus(1.5)) - np.array([x, y]))) == pytest.approx(0.5 * cal.slope, rel=1e-6)
+
+
+def test_color_hints_weak_calibration(cfg):
+    cc = cfg["color"]
+    base = {"n_color": 30, "n_frames": 30, "n_saturated": 0, "r_g": 0.2, "b_g": 0.0, "bv_eq": 2.6, "e_bv_eq": 1.2,
+            "T_eq_K": 2725.0, "green_excess": 0.0, "d_sun_dex": 0.12, "slope_dex_s": 0.0, "chi2": 1.0,
+            "rg_spread": 0.02}
+    ref = {"r_g": 0.088, "b_g": 0.047}
+    h = lambda s, **kw: C.color_hint({**base, **s}, **{"kind": "unid", "class_hint": "bliski obiekt?", "dur_s": 5.0,  # noqa: E731
+                                                        "sunlit_ref": ref, "ccfg": cc, "weak": True, **kw})
+    hint, why = h({})
+    assert hint.startswith("cieplejszy niż satelity") and "K" not in why.split("(")[0]
+    assert h({"d_sun_dex": 0.01})[0] == "oświetlony Słońcem (jak satelity)"
+    assert h({"d_sun_dex": 0.2}, class_hint="meteor?")[0].startswith("cieplejszy niż Słońce → Na/Fe")
+    # nadmiar zieleni poniżej rozrzutu gwiazd (próg podniesiony) to nie Mg/O
+    assert not h({"green_excess": 0.055, "d_sun_dex": 0.0}, class_hint="meteor?",
+                 green_thr=0.058)[0].startswith("zielony")
+    # bez słabej kalibracji: klasycznie, z kelwinami
+    assert C.color_hint({**base, "T_eq_K": 2600.0}, kind="unid", class_hint="meteor?", dur_s=0.5, sunlit_ref=None,
+                        ccfg=cc)[0].startswith("pomarańczowy")
