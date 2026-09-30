@@ -1,5 +1,7 @@
 # skyhunt
 
+**Polski** | [English](README.en.md)
+
 ## Od autora
 
 Ten kod piszę dla wszystkich obserwatorów nieba, nie tylko dla siebie. Nagrywam niebo zwykłym aparatem z jasnym obiektywem i chcę wiedzieć, co naprawdę przeleciało przez kadr: który to satelita (z numerem NORAD), co jest meteorem, co samolotem, a co zostaje niewyjaśnione. Wszystko ma być policzone i sprawdzalne, bez zgadywania. Jeśli masz aparat, statyw i trochę cierpliwości, możesz robić to samo.
