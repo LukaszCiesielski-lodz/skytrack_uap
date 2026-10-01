@@ -1,5 +1,14 @@
 # CHANGELOG
 
+## Planetoidy, komety i NEO — 2026-10-01
+
+- **Etap `smallbodies`** (po `identify`, przed `report`; sekcja `smallbodies` w configu):
+  - lista małych ciał w kadrze z JPL `sb_ident` (V ≤ 13, NEO ≤ 16), położenie obserwatora wysyłane w zaokrągleniu do 0,1°;
+  - jedno przejście dekodera: stos okien jadących z niebem i obiektem (do 15 obiektów) oraz okien gwiazd katalogowych 4–6 mag do punktu zerowego `ZP = a + b·r²` (winietowanie);
+  - fotometria, centroid (O−C), zasięg 5σ, sprawdzenie gwiazd tła w Gaia DR3 (VizieR), werdykt;
+  - bardzo bliskie NEO dopasowywane do niezidentyfikowanych torów (pozycja ≤ 0,2°, tempo ×0,5…2).
+- **Raport:** romby na mapie, tabela i miniatury stosów w `summary.pdf`, notka z zasięgiem; brak sieci lub błąd JPL nie blokuje raportu. `report` rev 5.
+
 ## Przelot ptaków, słaba kalibracja koloru — 2026-09-30
 
 Po DSCF4651 (29.09.2026):

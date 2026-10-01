@@ -212,6 +212,35 @@ adsb:
   max_gap_s: 120             # interpolacja trasy tylko między punktami bliższymi niż tyle
   match_deg: 1.5             # mediana odległości kątowej tor ↔ trasa ADS-B (błąd wysokości barometrycznej)
 
+smallbodies:
+  # Planetoidy, komety i NEO w kadrze: lista z JPL Small-Body Identification API (pozycje
+  # z numerycznego całkowania orbit). Planetoida pasa głównego przesuwa się przez 5 min o ~0,1 px,
+  # więc w nagraniu wygląda jak gwiazda — mierzymy ją w stosie wszystkich klatek, w oknie jadącym
+  # razem z niebem i obiektem. „Wykryta” = źródło o SNR ≥ detect_snr w przewidzianym miejscu,
+  # jasność zgodna z przewidywaną, bez jaśniejszej gwiazdy tła (Gaia DR3, VizieR) w aperturze.
+  enabled: auto              # auto | off
+  api_url: https://ssd-api.jpl.nasa.gov/sb_ident.api
+  gaia_url: https://vizier.cds.unistra.fr/viz-bin/asu-tsv
+  timeout_s: 120
+  vmag_lim: 13.0             # planetoidy i komety jaśniejsze niż tyle (zasięg stosu 5 min ~11–12 mag)
+  neo_vmag_lim: 16.0         # NEO także słabsze (na liście; pomiar powie „za słaba”)
+  site_round_deg: 0.1        # do JPL idą współrzędne zaokrąglone (~10 km): dla NEO na 0,01 au błąd ~1″
+  fov_margin_deg: 1.0
+  max_targets: 15            # najjaśniejsze w kadrze (każdy to małe okno w tym samym przejściu)
+  pos_step_s: 2.0            # pozycje liczone co tyle, między nimi interpolacja
+  window_px: 24              # połowa boku okna stosu
+  aperture_px: 3
+  annulus_px: [6, 10]
+  search_px: 2.5             # centroid w tym promieniu od przewidywanej pozycji (odchyłka O−C)
+  detect_snr: 5
+  mag_tol: 1.0               # |V zmierzone − V przewidziane| dla „wykryta”
+  blend_dmag: 1.5            # gwiazda Gaia jaśniejsza niż V + tyle w aperturze → „zlewa się z gwiazdą”
+  zp_mag_range: [4.0, 6.0]   # gwiazdy katalogowe do punktu zerowego (niezasycone w stosie)
+  zp_max_stars: 40
+  zp_sat_linear: 0.95        # szczyt w stosie (światło liniowe 0…1) ≥ tyle → gwiazda zasycona, pomijana
+  y_full_range: false        # Y w zakresie 16–235 (wideo z aparatu); true: 0–255
+  track_match_deg: 0.2       # bardzo bliski NEO jako tor: odległość od przewidywanej pozycji
+
 iod:
   # Eksport pozycji w formacie IOD (report/iod.txt) dla amatorskiej sieci obserwatorów
   # satelitów (SeeSat-L). Numer stacji przydziela społeczność; 9999 = jeszcze nieprzydzielony.

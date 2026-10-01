@@ -26,6 +26,7 @@ log = logging.getLogger("skyhunt")
 
 C_SAT, C_UNID = "#2ecc40", "#ff2a2a"
 C_PRED, C_CONST, C_STAR, C_GRID = "#00d5ff", "#7fb2ff", "#ffd84d", "#5a6a80"
+C_BODY = "#ff4fd8"          # planetoidy, komety, NEO
 A4 = (11.69, 8.27)
 CONF_RANK = {"high": 3, "medium": 2, "low": 1, "": 0, None: 0}
 
@@ -384,6 +385,9 @@ def summary_pdf(path: Path, s: dict, rcfg: dict, always: list[str]) -> None:
             for o in s["objects"]:
                 _draw_path(ax, o, lw=1.4)
                 ax.text(o["path_xy"][0, 0] + 15, o["path_xy"][0, 1] + 15, o["short"], color=o["color"], fontsize=7)
+            for b in s.get("bodies") or []:
+                ax.plot(b["x"], b["y"], "D", ms=7, mfc=C_BODY if b["detected"] else "none", mec=C_BODY, mew=1.0)
+                ax.text(b["x"] + 18, b["y"] - 18, b["label"], color=C_BODY, fontsize=6)
         else:
             ax.axis("off")
             ax.text(0.5, 0.5, "brak rozwiązania astrometrycznego — mapa niedostępna", ha="center")
@@ -418,10 +422,95 @@ def summary_pdf(path: Path, s: dict, rcfg: dict, always: list[str]) -> None:
         _table_pages(pdf, Figure, "Tory", s["table_header"], s["table_rows"])
         _table_pages(pdf, Figure, "Satelity przewidziane w kadrze (katalog), a niewykryte",
                      s["pred_header"], s["pred_rows"])
+        if s.get("sb_title"):
+            _table_pages(pdf, Figure, s["sb_title"], s["sb_header"], s["sb_rows"])
+            _stamp_pages(pdf, Figure, s.get("sb_stamps") or [])
         fig = Figure(figsize=A4)
         fig.suptitle("Ograniczenia i kontrola fałszywych alarmów", x=0.02, ha="left", fontsize=13)
         fig.text(0.02, 0.92, "\n".join(s["notes"]), fontsize=9, va="top")
         pdf.savefig(fig)
+
+
+# ---------------------------------------------------------------- planetoidy, komety, NEO
+
+SB_HEADER = ["nazwa", "typ", "V przew.", "V zmierz.", "zasięg", "SNR", "ruch [″/h]", "w nagraniu [px]", "O−C [″]",
+             "werdykt"]
+
+
+def _smallbodies(outdir: Path, cfg: dict, ref_wcs) -> dict:
+    """Dane z etapu ``smallbodies`` do raportu: wiersze tabeli, punkty na mapie, miniatury stosów,
+    podpowiedzi torów (bardzo bliskie NEO) i notki."""
+    import pandas as pd
+
+    out = {"rows": [], "map": [], "stamps": [], "tracks": {}, "notes": [], "title": ""}
+    p, pj = outdir / "smallbodies.csv", outdir / "smallbodies.json"
+    if not pj.exists():
+        return out
+    info = read_json(pj)
+    scfg = cfg.get("smallbodies", {})
+    if info.get("enabled") is False:
+        return out
+    if info.get("error"):
+        out["notes"].append(f"• Planetoidy/NEO: brak danych ({info['error'][:90]}).")
+        return out
+    lim = info.get("mag_lim_center")
+    out["title"] = (f"Planetoidy, komety i NEO w kadrze (JPL; V ≤ {scfg.get('vmag_lim', '?')}, NEO ≤ "
+                    f"{scfg.get('neo_vmag_lim', '?')}; zasięg stosu w środku kadru "
+                    f"{f'{lim:.1f}' if lim else '–'} mag)")
+    out["notes"].append(
+        f"• Planetoidy/NEO: lista z JPL SB Ident ({info.get('n_in_frame', 0)} w kadrze), pomiar w stosie całego nagrania "
+        f"przesuwanym za obiektem; zasięg {f'{lim:.1f}' if lim else '–'} mag. Do JPL wysłano położenie "
+        f"zaokrąglone do {scfg.get('site_round_deg', 0.1)}°.")
+    df = pd.read_csv(p) if p.exists() else pd.DataFrame()
+    stamps = dict(np.load(outdir / "smallbodies_stamps.npz")) if (outdir / "smallbodies_stamps.npz").exists() else {}
+    for _, r in (df[df["in_frame"].astype(bool)] if len(df) else df).iterrows():
+        kind = str(r["kind"]) + (" NEO" if bool(r["is_neo"]) else "")
+        out["rows"].append([str(r["name"])[:30], kind, _fmt(float(r["vmag"]), ".1f"), _fmt(float(r["mag_meas"]), ".1f"),
+                            _fmt(float(r["mag_lim"]), ".1f"), _fmt(float(r["snr"]), ".1f"),
+                            _fmt(float(r["rate_arcsec_h"]), ".0f"), _fmt(float(r["motion_px"]), ".2f"),
+                            _fmt(float(r["offset_arcsec"]), ".0f"), str(r["status"])[:34]])
+        if ref_wcs is not None:
+            x, y = _world2pix(ref_wcs, np.array([float(r["ra"])]), np.array([float(r["dec"])]))
+            out["map"].append({"x": float(x[0]), "y": float(y[0]), "label": str(r["name"]).split(" (")[0][:20],
+                               "detected": str(r["status"]) == "wykryta"})
+        key = str(r.get("stamp") or "")
+        if key and key in stamps:
+            out["stamps"].append({"title": f"{str(r['name'])[:26]}\n{str(r['status'])[:30]}", "img": stamps[key],
+                                  "cx": float(r["stamp_cx"]), "cy": float(r["stamp_cy"]),
+                                  "r": float(scfg.get("aperture_px", 3))})
+    tp = outdir / "smallbodies_tracks.csv"
+    if tp.exists():
+        try:
+            for _, m in pd.read_csv(tp).iterrows():
+                out["tracks"][int(m["track_id"])] = ("NEO: " if bool(m["is_neo"]) else "mała planeta: ") + str(m["name"])[:20]
+        except pd.errors.EmptyDataError:
+            pass
+    return out
+
+
+def _stamp_pages(pdf, Figure, stamps: list[dict], per_page: int = 12) -> None:
+    for p0 in range(0, len(stamps), per_page):
+        fig = Figure(figsize=A4)
+        fig.suptitle("Planetoidy / NEO: stos całego nagrania przesuwany za obiektem (okrąg: apertura w "
+                     "przewidzianym miejscu)", x=0.02, ha="left", fontsize=11)
+        for i, st in enumerate(stamps[p0:p0 + per_page]):
+            ax = fig.add_axes([0.03 + (i % 4) * 0.245, 0.64 - (i // 4) * 0.30, 0.2, 0.24])
+            img = st["img"]
+            med = float(np.median(img))
+            hi = float(np.percentile(img, 99.5))
+            ax.imshow(np.arcsinh(np.clip((img - med) / max(hi - med, 1e-9), 0, None) * 5), cmap="gray",
+                      origin="upper", interpolation="nearest")
+            ax.add_patch(_circle((st["cx"], st["cy"]), st["r"]))
+            ax.set_title(st["title"], fontsize=7)
+            ax.set_xticks([])
+            ax.set_yticks([])
+        pdf.savefig(fig)
+
+
+def _circle(xy, r):
+    from matplotlib.patches import Circle
+
+    return Circle(xy, r, fill=False, color=C_BODY, lw=1.0)
 
 
 # ---------------------------------------------------------------- składanie raportu
@@ -645,6 +734,7 @@ def build(outdir: Path, video: Path, meta: VideoMeta, cfg: dict) -> list[str]:
              f"Pole widzenia: {fov.get('fov_w_deg', float('nan')):.2f}° × {fov.get('fov_h_deg', float('nan')):.2f}°, "
              f"skala {fov.get('scale_arcsec_px', float('nan')):.2f}″/px, {wcsinfo.get('crop', {}).get('verdict', '–')}",
              "", f"Katalog: {sync.get('catalog_note', '–')}"]
+    sb = _smallbodies(outdir, cfg, ref[1] if ref else None)
     n_sat = sum(1 for o in objects if o["color"] == C_SAT)
     rows = []
     for _, t in tracks.iterrows():
@@ -655,7 +745,8 @@ def build(outdir: Path, video: Path, meta: VideoMeta, cfg: dict) -> list[str]:
                      f"{t['az0']:.1f}/{t['alt0']:.1f}", f"{t['az1']:.1f}/{t['alt1']:.1f}",
                      f"{b['norad']} {b['name'][:18]}" if b else "–",
                      (b or {}).get("confidence") or "–",
-                     "" if b else ("samolot (ADS-B)" if int(t["track_id"]) in air else t["class_hint"]),
+                     "" if b else (sb["tracks"].get(int(t["track_id"]))
+                                   or ("samolot (ADS-B)" if int(t["track_id"]) in air else t["class_hint"])),
                      _color_short(colors.get(int(t["track_id"])))])
     pred_rows = []
     if len(pred):
@@ -678,10 +769,12 @@ def build(outdir: Path, video: Path, meta: VideoMeta, cfg: dict) -> list[str]:
         d = read_json(p)
         notes.append(f"• Nagranie ciemne {d['file']}: {d['tracks_per_hour']:.1f} fałszywych torów/h "
                      f"({d['tracks']} torów w {d['duration_s']:.0f} s).")
+    notes += sb["notes"]
     s = {"title": f"skyhunt — {video.name} — {n_sat} satelitów zidentyfikowanych, "
                   f"{len(objects) - n_sat} pozostałych torów",
          "stretched": ref[0] if ref else None, "wcs": ref[1] if ref else None, "objects": [o for o in objects if "path_xy" in o],
-         "legend": "zielony: satelita (NORAD), czerwony: niezidentyfikowany; niebieskie linie: konstelacje; "
+         "legend": "zielony: satelita (NORAD), czerwony: niezidentyfikowany; różowy romb: planetoida/kometa/NEO "
+                   "(wypełniony = wykryta); niebieskie linie: konstelacje; "
                    "białe kreski: co 1 s; przerywana: predykcja z elementów orbit",
          "info_lines": info, "sync_members": members, "delta_s": delta,
          "table_header": ["tor", "start UTC", "czas [s]", "°/s", "Az/Alt start", "Az/Alt koniec", "NORAD", "pewność",
@@ -689,7 +782,8 @@ def build(outdir: Path, video: Path, meta: VideoMeta, cfg: dict) -> list[str]:
          "table_rows": rows,
          "color_info": col_info, "color_stars": col_stars, "color_lines": _color_summary_lines(col_info, colors),
          "pred_header": ["NORAD", "nazwa", "wejście UTC", "wyjście UTC", "odl. [km]", "oświetl."],
-         "pred_rows": pred_rows, "notes": notes}
+         "pred_rows": pred_rows, "notes": notes, "bodies": sb["map"], "sb_title": sb["title"],
+         "sb_header": SB_HEADER, "sb_rows": sb["rows"], "sb_stamps": sb["stamps"]}
     summary_pdf(rep / "summary.pdf", s, rcfg, always)
     outputs.insert(0, "report/summary.pdf")
     return outputs

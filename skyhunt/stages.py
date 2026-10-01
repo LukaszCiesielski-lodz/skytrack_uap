@@ -562,8 +562,39 @@ def color(ctx: StageContext) -> dict:
         return {"outputs": ["color_calib.json", "track_color.csv"], "metrics": {"color_error": True}}
 
 
+@PIPELINE.stage("smallbodies", sections=("smallbodies", "decode.exact_luma_required", "color.transfer", "camera"),
+                requires=("identify",), rev=1, roles=("sky",))
+def smallbodies(ctx: StageContext) -> dict:
+    """Planetoidy, komety i NEO w kadrze (JPL sb_ident) zmierzone w stosie przesuwanym za obiektem."""
+    from . import smallbodies as SB
+    from .astrometry import load_wcs
+    from .sky import FixedCamera
+    from .timing import FrameClock
+
+    scfg = ctx.cfg["smallbodies"]
+    if str(scfg.get("enabled", "auto")) == "off":
+        return SB.empty_outputs(ctx.outdir, {"enabled": False})
+    try:
+        meta, sync = load_meta(ctx), ctx.read_json("time_sync.json")
+        t0, site = prior_start(ctx), _site(ctx.cfg)
+        wcsinfo = ctx.read_json("wcs.json")
+        camera = FixedCamera(load_wcs(ctx.outdir / wcsinfo["reference_wcs"]), wcsinfo["reference_tau_s"], t0, *site)
+        clock = FrameClock.from_config(t0, meta, ctx.cfg["camera"])
+        dcfg = ctx.cfg["decode"]
+
+        def open_batches():
+            dec = open_decoder(ctx.video_path, meta, dcfg)
+            return ((fb.start, fb.y) for fb in dec.batches(int(scfg.get("batch_frames", dcfg["batch_frames"]))))
+
+        return SB.run(ctx.outdir, ctx.video_path, meta, ctx.cfg, camera=camera, clock=clock, t0=t0,
+                      delta_s=float(sync["delta_s"]), site=site, open_batches=open_batches, log_=ctx.log)
+    except Exception as e:  # noqa: BLE001 — brak sieci / JPL nie blokuje raportu
+        ctx.log.warning("[%s] małe ciała niedostępne: %s", ctx.video_path.name, e)
+        return SB.empty_outputs(ctx.outdir, {"enabled": True, "error": f"{type(e).__name__}: {e}"})
+
+
 @PIPELINE.stage("report", sections=("report", "iod", "classify.periodic_min_power", "identify.reference"),
-                requires=("identify", "adsb", "color"), rev=4, roles=("sky",))
+                requires=("identify", "adsb", "color", "smallbodies"), rev=5, roles=("sky",))
 def report(ctx: StageContext) -> dict:
     import pandas as pd
 

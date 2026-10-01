@@ -75,6 +75,15 @@ Hints (hypotheses, always with numbers):
 
 **Camera settings for color:** fixed white balance (daylight or 5500 K, not auto), Standard/Provia film simulation without Color Chrome, **Color +4** (boosts chroma before H.264 crushes it; the star calibration takes it into account). Bright objects are saturated and have no color; the PDF states how many frames were rejected. Black-and-white recordings are detected and skipped.
 
+### Asteroids, comets and NEOs
+
+The `smallbodies` stage checks which known small bodies were in the frame and measures them in the recording.
+- **List:** JPL Small-Body Identification API (`sb_ident`), positions from numerical orbit integration, V magnitude and motion in ″/h. A separate query for NEOs, including fainter ones. The observer position sent to JPL is rounded to 0.1° (~10 km): for an NEO at 0.01 au this changes the position by ~1″, and the exact location stays private.
+- **Why not a track:** a main-belt asteroid moves ~0.1 px in 5 minutes, so in the video it looks like a star. The track detector needs ≥ ~0.1 px per frame, i.e. tens of thousands of ″/h. Only an NEO passing very close to Earth can produce a track; the report then labels the track with its name.
+- **Measurement:** a stack of all frames in a small window that moves with the sky and the object. Noise drops as √N, so the reach is several magnitudes deeper than a single frame. The photometric zero point comes from catalog stars in the same stack, corrected for vignetting.
+- **Verdict:** "wykryta" (detected) = SNR ≥ 5 at the predicted position, brightness consistent with the prediction (±1 mag) and no brighter background star (Gaia DR3 from VizieR) in the aperture. Otherwise "zlewa się z gwiazdą" (blended with a star), "za słaba (zasięg X mag)" (too faint, reach X mag) or "niewykryta" (not detected).
+- **Report:** pink diamonds on the map (filled = detected), a table with predicted and measured magnitude, reach, motion and O−C offset, stack thumbnails. Files: `smallbodies.csv`, `smallbodies.json`, `smallbodies_tracks.csv`.
+
 ### `tracks_final.csv`: table of all tracks
 
 The file is in `out/<file>/tracks_final.csv`, one row per track. The same table is next to it as `.parquet`. This is the most convenient place to find a specific object before opening the PDFs.

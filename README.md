@@ -75,6 +75,15 @@ Podpowiedzi (hipotezy, zawsze z liczbami):
 
 **Ustawienia aparatu do koloru:** stały balans bieli (światło dzienne albo 5500 K, nie auto), symulacja Standard/Provia bez Color Chrome, **Kolor +4** (wzmacnia chromę, zanim H.264 ją zgniecie; kalibracja na gwiazdach to przelicza). Jasne obiekty są prześwietlone i nie mają koloru; PDF podaje, ile klatek odrzucono. Nagrania czarno-białe są wykrywane i pomijane.
 
+### Planetoidy, komety i NEO
+
+Etap `smallbodies` sprawdza, które znane małe ciała były w kadrze, i mierzy je w nagraniu.
+- **Lista:** JPL Small-Body Identification API (`sb_ident`), pozycje z numerycznego całkowania orbit, jasność V i ruch w ″/h. Osobne zapytanie o NEO, także słabsze. Do JPL idzie położenie obserwatora zaokrąglone do 0,1° (~10 km): dla NEO na 0,01 au zmienia to pozycję o ~1″, a dokładne miejsce zostaje prywatne.
+- **Dlaczego nie tor:** planetoida pasa głównego przesuwa się przez 5 minut o ~0,1 px, więc w nagraniu wygląda jak gwiazda. Detektor torów wymaga ≥ ~0,1 px na klatkę, czyli dziesiątek tysięcy ″/h. Tor może dać tylko NEO przelatująca bardzo blisko Ziemi; wtedy raport podpisuje tor jej nazwą.
+- **Pomiar:** stos wszystkich klatek w małym oknie, które jedzie razem z niebem i obiektem. Szum maleje jak √N, więc zasięg jest o kilka magnitudo głębszy niż w jednej klatce. Punkt zerowy jasności z gwiazd katalogowych w tym samym stosie, z poprawką na winietowanie.
+- **Werdykt:** „wykryta” = SNR ≥ 5 w przewidzianym miejscu, jasność zgodna z przewidywaną (±1 mag) i brak jaśniejszej gwiazdy tła (Gaia DR3 z VizieR) w aperturze. Inaczej „zlewa się z gwiazdą”, „za słaba (zasięg X mag)” albo „niewykryta”.
+- **Raport:** różowe romby na mapie (wypełniony = wykryta), tabela z jasnością przewidzianą i zmierzoną, zasięgiem, ruchem i odchyłką O−C, miniatury stosów. Pliki: `smallbodies.csv`, `smallbodies.json`, `smallbodies_tracks.csv`.
+
 ### `tracks_final.csv`: tabela wszystkich torów
 
 Plik jest w `out/<plik>/tracks_final.csv`, jeden wiersz na tor. Obok leży ta sama tabela jako `.parquet`. To najwygodniejsze miejsce, żeby znaleźć konkretny obiekt, zanim otworzysz PDF-y.

@@ -176,6 +176,14 @@ def validate(cfg: dict) -> None:
             errors.append("color: wymagane aperture_px < annulus_px[0] < annulus_px[1]")
         if not 0 < float(col.get("sat_level", 0)) <= 1:
             errors.append("color.sat_level: (0, 1]")
+    sb = cfg.get("smallbodies") or {}
+    if sb:
+        if str(sb.get("enabled", "auto")) not in ("auto", "off"):
+            errors.append("smallbodies.enabled: auto | off")
+        ann = sb.get("annulus_px")
+        if not (isinstance(ann, list) and len(ann) == 2 and sb.get("aperture_px", 0) < ann[0] < ann[1]
+                and ann[1] < sb.get("window_px", 0)):
+            errors.append("smallbodies: wymagane aperture_px < annulus_px[0] < annulus_px[1] < window_px")
     for fname, over in (cfg.get("files") or {}).items():
         if not isinstance(over, dict):
             errors.append(f"files.{fname}: oczekiwano słownika nadpisań")
