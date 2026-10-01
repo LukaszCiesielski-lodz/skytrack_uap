@@ -49,6 +49,23 @@ def test_sites_file_overrides_site_per_file(tmp_path):
         load_config(PACKAGE_CONFIG, sites=sites)
 
 
+def test_sites_file_hint_star_per_file(tmp_path):
+    from skyhunt.config import PACKAGE_CONFIG, load_config
+
+    sites = tmp_path / "sites.yaml"
+    sites.write_text("DSCF0001.MOV: {lat_deg: 50.5, lon_deg: 20.25, elevation_m: 300, hint_star: Altair}\n"
+                     "DSCF0002.MOV: {lat_deg: 50.5, lon_deg: 20.25, elevation_m: 300, hint_star: null}\n",
+                     encoding="utf-8")
+    cfg = load_config(PACKAGE_CONFIG, sites=sites)
+    a = config_for_file(cfg, "/raw/DSCF0001.MOV")
+    assert a["astrometry"]["hint_star"] == "Altair" and "hint_star" not in a["site"]
+    assert config_for_file(cfg, "/raw/DSCF0002.MOV")["astrometry"]["hint_star"] == "Deneb"   # domyślna
+    sites.write_text("DSCF0001.MOV: {lat_deg: 50.5, lon_deg: 20.25, elevation_m: 300, hint_star: Nieznana}\n",
+                     encoding="utf-8")
+    with pytest.raises(ValueError):
+        load_config(PACKAGE_CONFIG, sites=sites)
+
+
 def test_dark_role_from_sites_file_or_name(tmp_path):
     from skyhunt.config import PACKAGE_CONFIG, load_config
 

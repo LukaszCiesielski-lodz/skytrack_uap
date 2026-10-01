@@ -24,9 +24,10 @@ def resolve_config_path(path: str | Path | None = None) -> Path:
 
 def load_config(path: str | Path | None = None, overrides: dict | None = None,
                 sites: str | Path | None = None) -> dict:
-    """``sites``: plik YAML {nazwa pliku: {lat_deg, lon_deg, elevation_m}} z miejscem każdej
-    obserwacji (domyślnie ``$SKYHUNT_SITES``). Trzymany poza repo (Drive), nakładany jako
-    ``files.<plik>.site``; pliki bez wpisu używają sekcji ``site``."""
+    """``sites``: plik YAML {nazwa pliku: {lat_deg, lon_deg, elevation_m[, hint_star]}} z miejscem
+    każdej obserwacji (domyślnie ``$SKYHUNT_SITES``). Trzymany poza repo (Drive), nakładany jako
+    ``files.<plik>.site`` (i ``files.<plik>.astrometry.hint_star``); pliki bez wpisu używają sekcji
+    ``site``."""
     p = resolve_config_path(path)
     with open(p, encoding="utf-8") as fh:
         cfg = yaml.safe_load(fh) or {}
@@ -38,6 +39,9 @@ def load_config(path: str | Path | None = None, overrides: dict | None = None,
         for f, s in per_site.items():
             s = dict(s or {})
             over = {"role": s.pop("role")} if "role" in s else {}
+            if s.get("hint_star"):          # jasna gwiazda w kadrze: podpowiedź dla plate solve
+                over["astrometry"] = {"hint_star": str(s.pop("hint_star"))}
+            s.pop("hint_star", None)
             if s:
                 over["site"] = s
             files[str(f)] = over

@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## Gwiazda-podpowiedź dla każdego pliku — 2026-10-01
+
+- Komórka „Nagrania”: opcjonalne 4. pole w `NEW_SITES` (np. `(lat, lon, wys, 'Altair')`) trafia do `sites.yaml` jako `hint_star` i nadpisuje `astrometry.hint_star` tylko dla tego pliku. Plate solve kadru bez Denebu (Kasjopeja, Orzeł) nie traci wtedy czasu na próbę z błędną podpowiedzią.
+
 ## Planetoidy, komety i NEO — 2026-10-01
 
 - **Etap `smallbodies`** (po `identify`, przed `report`; sekcja `smallbodies` w configu):
