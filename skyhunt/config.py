@@ -73,6 +73,8 @@ def config_for_file(cfg: dict, video_path: str | Path) -> dict:
         per_file["role"] = "dark"
     if per_file.get("role") == "dark" and cfg.get("dark_overrides"):
         per_file = deep_merge(cfg["dark_overrides"], per_file)   # wspólne ustawienia nagrań ciemnych
+    if Path(video_path).is_dir() and cfg.get("photo_overrides"):  # folder = sesja zdjęć RAW
+        per_file = deep_merge(cfg["photo_overrides"], per_file)
     return deep_merge(cfg, per_file) if per_file else cfg
 
 

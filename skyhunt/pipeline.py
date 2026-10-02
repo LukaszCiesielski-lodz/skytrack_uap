@@ -21,6 +21,17 @@ from .manifest import Manifest
 ALL_ROLES = ("sky", "dark")
 
 
+def input_kind(path: Path) -> str:
+    """Rodzaj wejścia: ``photos`` (folder sesji zdjęć RAW) albo ``video`` (plik)."""
+    return "photos" if Path(path).is_dir() else "video"
+
+
+def input_outdir(out_root: Path, path: Path) -> Path:
+    """Katalog wyników: nazwa pliku bez rozszerzenia albo pełna nazwa folderu sesji."""
+    path = Path(path)
+    return Path(out_root) / (path.name if path.is_dir() else path.stem)
+
+
 def file_role(cfg: dict) -> str:
     """Rola pliku z configu (sekcja ``files``): ``sky`` (domyślnie) albo ``dark``."""
     return str(cfg.get("role") or "sky")
@@ -47,6 +58,15 @@ class StageContext:
     @property
     def role(self) -> str:
         return file_role(self.cfg)
+
+    @property
+    def kind(self) -> str:
+        return input_kind(self.video_path)
+
+    @property
+    def input_path(self) -> Path:
+        """Plik wideo albo folder sesji zdjęć (``video_path`` zostaje dla zgodności)."""
+        return self.video_path
 
     @property
     def out_root(self) -> Path:
@@ -125,7 +145,7 @@ class Pipeline:
         video_path = Path(video_path)
         log = log or logging.getLogger("skyhunt")
         cfg = config_for_file(cfg, video_path)
-        outdir = Path(out_root) / video_path.stem
+        outdir = input_outdir(out_root, video_path)
         outdir.mkdir(parents=True, exist_ok=True)
         man = Manifest.load(outdir, video_path)
         if man.reset_reason:
@@ -163,4 +183,9 @@ class Pipeline:
         return status
 
 
-PIPELINE = Pipeline()
+PIPELINE = Pipeline()          # wideo (pliki MOV/MP4)
+PHOTO_PIPELINE = Pipeline()    # sesje zdjęć RAW (folder z plikami RAF); etapy w photo_stages.py
+
+
+def pipeline_for(path: Path) -> Pipeline:
+    return PHOTO_PIPELINE if input_kind(path) == "photos" else PIPELINE

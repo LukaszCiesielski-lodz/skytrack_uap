@@ -22,6 +22,23 @@ def video_fingerprint(path: Path) -> dict:
     return {"name": path.name, "size_bytes": path.stat().st_size, "head_sha256": head}
 
 
+def input_fingerprint(path: Path) -> dict:
+    """Plik wideo: jak ``video_fingerprint`` (stare manifesty zostają ważne). Folder sesji zdjęć:
+    liczba i łączny rozmiar plików, hash listy (nazwa, rozmiar) i początku pierwszego
+    i ostatniego pliku — dorzucone albo podmienione zdjęcie zmienia odcisk."""
+    path = Path(path)
+    if not path.is_dir():
+        return video_fingerprint(path)
+    files = sorted(p for p in path.iterdir() if p.is_file() and not p.name.startswith("."))
+    listing = hashlib.sha256("\n".join(f"{p.name}:{p.stat().st_size}" for p in files).encode()).hexdigest()[:16]
+    head = hashlib.sha256()
+    for p in (files[:1] + files[-1:]) if files else []:
+        with open(p, "rb") as fh:
+            head.update(fh.read(1 << 16))
+    return {"name": path.name, "n_files": len(files), "size_bytes": sum(p.stat().st_size for p in files),
+            "list_sha256": listing, "head_sha256": head.hexdigest()[:16]}
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -37,7 +54,7 @@ class Manifest:
     @classmethod
     def load(cls, outdir: Path, video_path: Path) -> "Manifest":
         path = Path(outdir) / cls.FILENAME
-        fp = video_fingerprint(video_path)
+        fp = input_fingerprint(video_path)
         data, reason = None, None
         if path.exists():
             try:

@@ -13,15 +13,32 @@ from .io import to_jsonable, write_json
 log = logging.getLogger("skyhunt")
 
 
-def iter_inputs(path: Path, extensions: list[str]) -> list[Path]:
-    """Plik → [plik]; katalog → pliki wideo (bez podkatalogów), posortowane."""
+def _photo_count(folder: Path, photo_extensions) -> int:
+    exts = {e.lower() for e in photo_extensions}
+    return sum(1 for p in folder.iterdir() if p.is_file() and p.suffix.lower() in exts)
+
+
+def iter_inputs(path: Path, extensions: list[str], photo_extensions=(".raf",), min_photos: int = 3) -> list[Path]:
+    """Plik → [plik]. Folder sesji zdjęć (≥ ``min_photos`` RAF) → [folder]. Inny katalog → pliki
+    wideo i podfoldery-sesje (bez głębszych poziomów), posortowane: najpierw wideo, potem sesje."""
     path = Path(path)
     if path.is_dir():
+        if _photo_count(path, photo_extensions) >= min_photos:
+            return [path]
         exts = {e.lower() for e in extensions}
-        return sorted(p for p in path.iterdir() if p.is_file() and p.suffix.lower() in exts)
+        videos = sorted(p for p in path.iterdir() if p.is_file() and p.suffix.lower() in exts)
+        sessions = sorted(p for p in path.iterdir()
+                          if p.is_dir() and _photo_count(p, photo_extensions) >= min_photos)
+        return videos + sessions
     if not path.exists():
         raise FileNotFoundError(path)
     return [path]
+
+
+def _inputs(src: Path, cfg: dict) -> list[Path]:
+    icfg = cfg["input"]
+    return iter_inputs(src, icfg["extensions"], icfg.get("photo_extensions", [".raf"]),
+                       int(icfg.get("min_photos", 3)))
 
 
 def _common() -> argparse.ArgumentParser:
@@ -68,7 +85,12 @@ def cmd_probe(args, cfg) -> int:
     from .metadata import probe_video
     from .timing import time_prior
 
-    for p in iter_inputs(args.input, cfg["input"]["extensions"]):
+    for p in _inputs(args.input, cfg):
+        if p.is_dir():
+            from .photo_stages import probe_session
+
+            print(json.dumps(to_jsonable(probe_session(p, config_for_file(cfg, p))), indent=2, ensure_ascii=False))
+            continue
         meta = probe_video(p)
         try:
             prior = time_prior(meta, config_for_file(cfg, p)["time"]).to_dict()
@@ -99,19 +121,19 @@ def cmd_bench(args, cfg) -> int:
 
 
 def cmd_run(args, cfg) -> int:
-    from . import stages  # noqa: F401 — rejestracja etapów
-    from .pipeline import PIPELINE
+    from . import photo_stages, stages  # noqa: F401 — rejestracja etapów
+    from .pipeline import pipeline_for
 
     src = args.input or Path(cfg["paths"]["raw_dir"])
     out = args.out or Path(cfg["paths"]["out_dir"])
-    files = iter_inputs(src, cfg["input"]["extensions"])
+    files = _inputs(src, cfg)
     if not files:
-        log.error("brak plików wideo w %s", src)
+        log.error("brak plików wideo ani folderów ze zdjęciami RAW w %s", src)
         return 1
     failed = []
     for f in files:
         try:
-            st = PIPELINE.run(f, cfg, out, only=_split(args.stages) or None, force=_split(args.force), log=log)
+            st = pipeline_for(f).run(f, cfg, out, only=_split(args.stages) or None, force=_split(args.force), log=log)
             log.info("[%s] %s", f.name, st)
         except Exception:  # noqa: BLE001 — błąd jednego pliku nie zatrzymuje pozostałych
             log.exception("[%s] błąd", f.name)
@@ -126,8 +148,10 @@ def cmd_status(args, cfg) -> int:
 
     src = args.input or Path(cfg["paths"]["raw_dir"])
     out = args.out or Path(cfg["paths"]["out_dir"])
-    for f in iter_inputs(src, cfg["input"]["extensions"]):
-        mpath = out / f.stem / "manifest.json"
+    from .pipeline import input_outdir
+
+    for f in _inputs(src, cfg):
+        mpath = input_outdir(out, f) / "manifest.json"
         if not mpath.exists():
             print(f"{f.name}: brak manifestu")
             continue

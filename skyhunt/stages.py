@@ -195,6 +195,13 @@ def darkstats(ctx: StageContext) -> dict:
                 requires=("detect",), rev=1, roles=("sky",))
 def astrometry(ctx: StageContext) -> dict:
     """Plate solve stacków epok, zgodność epok, rzeczywiste pole widzenia."""
+    meta = load_meta(ctx)
+    return solve_epochs(ctx, (meta.height, meta.width))
+
+
+def solve_epochs(ctx: StageContext, shape: tuple[int, int]) -> dict:
+    """Wspólne dla wideo i zdjęć: plate solve obrazów z ``epochs.json`` → ``wcs.json``.
+    ``shape`` = (wysokość, szerokość) obrazów epok w pikselach."""
     import shutil
 
     from .astrometry import (corr_residuals, crop_verdict, ensure_index, epoch_agreement, fov_from_wcs, load_wcs,
@@ -202,7 +209,6 @@ def astrometry(ctx: StageContext) -> dict:
     from .sky import FixedCamera, resolve_star
 
     acfg = ctx.cfg["astrometry"]
-    meta = load_meta(ctx)
     if not solver_available(acfg):
         raise RuntimeError("brak solve-field: w notebooku uruchom `apt-get install astrometry.net`")
     adir = ctx.outdir / "astrometry"
@@ -211,7 +217,7 @@ def astrometry(ctx: StageContext) -> dict:
     index_dir = ensure_index(acfg)
     local_index = Path(acfg.get("local_index_dir", "/tmp/skyhunt-astrometry-index"))
     local_copy(sorted(index_dir.glob("index-*.fits")), local_index)
-    work = Path(acfg.get("work_dir", "/tmp/skyhunt-astrometry")) / ctx.video_path.stem
+    work = Path(acfg.get("work_dir", "/tmp/skyhunt-astrometry")) / ctx.outdir.name
     work.mkdir(parents=True, exist_ok=True)
     solver_cfg = write_solver_config(local_index, work / "solver.cfg")
     hint = resolve_star(acfg["hint_star"]) if acfg.get("hint_star") else None
@@ -236,8 +242,8 @@ def astrometry(ctx: StageContext) -> dict:
     ref = max(solved, key=lambda r: r.get("n_matched", 0))
     t0, site = prior_start(ctx), _site(ctx.cfg)
     cams = [FixedCamera(load_wcs(ctx.outdir / r["wcs"]), r["tau_s"], t0, *site) for r in solved]
-    rms = epoch_agreement(cams, (meta.height, meta.width), [r["tau_s"] for r in solved], solved.index(ref))
-    fov = fov_from_wcs(cams[solved.index(ref)].wcs, (meta.height, meta.width))
+    rms = epoch_agreement(cams, shape, [r["tau_s"] for r in solved], solved.index(ref))
+    fov = fov_from_wcs(cams[solved.index(ref)].wcs, shape)
     crop = crop_verdict(fov["fov_w_deg"], ctx.cfg["camera"])
     moved = rms > float(acfg["max_epoch_rms_px"])
     info = {"epochs": results, "n_epochs": len(results), "n_solved": len(solved), "reference": ref["file"],

@@ -305,6 +305,9 @@ paths:
 
 input:
   extensions: [".mp4", ".mov"]
+  # Sesja zdjęć RAW = podfolder z co najmniej min_photos plikami o tych rozszerzeniach.
+  photo_extensions: [".raf"]
+  min_photos: 3
 
 decode:
   # Kolejność prób; pierwszy działający backend jest używany w etapach obliczeniowych.
@@ -334,6 +337,34 @@ dark_overrides:
     # o +1 DN był detekcją (79% klatek oflagowanych). Podłoga ≈ σ nieba z DSCF4641 daje
     # FAR przy tym samym progu w DN co na niebie.
     sigma_floor_dn: 1.5
+
+photo:
+  # Sesje zdjęć RAW (Fujifilm RAF, bracketing AE). Ustalenia z diagnostyki F0 (X-E3, 2.10.2026):
+  # czas EXIF co 1 s (bez SubSec), każde zdjęcie ma własny czas, numer w serii w MakerNote,
+  # 14 bit także przy migawce elektronicznej.
+  frames_per_set: 3          # bez numeru w serii (MakerNote) grupujemy co tyle zdjęć
+  inter_frame_gap_s: 0.10    # przerwa między zdjęciami serii (odczyt matrycy); zmierzymy z satelitów (F2)
+  rolling_shutter_s: 0.0     # czas odczytu migawki elektronicznej; zmierzymy z satelitów (F2)
+  sat_frac: 0.98             # piksel ≥ tyle × biel = nasycony (cały superpiksel 3×3 oznaczony)
+  epoch_every_s: 60          # co ile sekund zdjęcie ev0 do plate solve (min. 3 epoki)
+  min_epochs: 3
+  stack_classes: [ev0, ev+1, ev-1]
+  stack_grid: [64, 43]       # siatka mapowania zdjęcie → układ odniesienia (FixedCamera), dalej interpolacja
+  stack_reject_sigma: 5.0    # piksel > średnia + tyle × σ zdjęcia (kreska, samolot) nie wchodzi do stosu
+  stack_warmup: 5            # pierwsze zdjęcia klasy wchodzą bez odrzucania
+  cache_dir: /content/skyhunt_cache   # lokalny dysk Colaba: luminancja per zdjęcie (float16)
+  checkpoint_every: 60       # zapis stanu stosu co tyle zdjęć (wznowienie po rozłączeniu)
+  workers: 4                 # wątki czytające pliki z Drive
+  preview_frames: 6          # podgląd pojedynczych zdjęć w raporcie
+
+# Ustawienia nakładane na każdą sesję zdjęć (folder) przed nadpisaniami per folder.
+photo_overrides:
+  astrometry:
+    # superpiksele 3×3: ~2010 px szerokości, ~48″/px — bez dodatkowego zmniejszania
+    downsample: 1
+    retry_downsample: 2
+  color:
+    transfer: linear         # RAW jest liniowy
 
 # Nadpisania per plik (klucz = nazwa pliku); nakładane na całą konfigurację. Miejsce obserwacji
 # i role nowych nagrań wpisuje się w notebooku (MyDrive/skyhunt/sites.yaml), nie tutaj.

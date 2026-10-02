@@ -1,5 +1,15 @@
 # CHANGELOG
 
+## Sesje zdjęć RAW — F1: wejście, czas, astrometria, głęboki stos — 2026-10-02
+
+- **Nowe wejście:** podfolder w `raw/` z ≥ 3 plikami RAF = jedna sesja zdjęć (osobny rejestr etapów `PHOTO_PIPELINE`, wyniki w `out/<folder>/`). Etapy wideo i ich hashe bez zmian.
+- `probe`: EXIF z JPEG-a w RAF (Pillow, bez exiftool) i MakerNote Fuji (numer w serii, licznik); serie bracketingu, klasy `ev0`/`ev+1`/`ev-1`; rytm interwałometru z pełnych sekund EXIF (noniusz: T_k = T0 + P·k); chwile otwarcia migawki; czas a priori w UTC → `photos.csv`, `meta.json`.
+- `frames` → `astrometry`: zdjęcia ev0 co minutę jako FITS z superpikseli 3×3 (X-Trans: 5 G + 2 R + 2 B), plate solve wspólnym rdzeniem z wideo (`solve_epochs`).
+- `process`: wszystkie zdjęcia (kopiowanie z Drive w wątkach), cache luminancji na dysku lokalnym, statystyki zdjęć (tło, szum, dryf, nasycenie), stosy per klasa wyrównane modelem nieruchomej kamery z odrzucaniem kresek, stos RGB ev0; punkty kontrolne co 60 zdjęć.
+- `report`: mapa nieba na stosie z konstelacjami, przebieg sesji, podgląd koloru.
+- Config: `photo`, `photo_overrides` (astrometria bez zmniejszania, `color.transfer: linear`), `input.photo_extensions`. Zależność `rawpy` (extra `raw`).
+- Ustalenia z diagnostyki F0 (X-E3): czas EXIF co 1 s bez ułamków, każde zdjęcie ma własny czas, numer w serii 1-2-3, 14 bit przy migawce elektronicznej, czerń 1019, biel 16383.
+
 ## Poprawki po sesji 1.10.2026 — 2026-10-02
 
 - Raport i IOD nie wywracają się na nagraniu bez torów (pusta `tracks_final` bez kolumn); `smallbodies` też (`KeyError: 'kind'`).

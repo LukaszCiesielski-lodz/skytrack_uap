@@ -75,6 +75,14 @@ Hints (hypotheses, always with numbers):
 
 **Camera settings for color:** fixed white balance (daylight or 5500 K, not auto), Standard/Provia film simulation without Color Chrome, **Color +4** (boosts chroma before H.264 crushes it; the star calibration takes it into account). Bright objects are saturated and have no color; the PDF states how many frames were rejected. Black-and-white recordings are detected and skipped.
 
+### RAW photo sessions (in development)
+
+Instead of video you can process RAW photo series (Fujifilm RAF) with AE bracketing: **one subfolder in `raw/` = one session** (e.g. `raw/deneb_0210/`), results in `out/<folder>/`. Dark: a folder with "dark" in its name. The observing site and hint star are entered in the "Nagrania" cell under the folder name.
+- **Done (F1):** EXIF and sequence number (Fuji MakerNote), intervalometer cadence from whole-second EXIF times, plate solving, a deep stack of each exposure class (0, +1, −1 EV) aligned for sky rotation, a report with the map and the session timeline.
+- **Next stages:** satellites as streaks with precise times and NORAD IDs (F2), brightness and glints along the streak, color (F3), asteroids in the stack (F4).
+- **Camera settings (X-E3):** M, f/1.0, ISO 800, electronic shutter, RAW only (lossless compressed), DR100, WB 5600 K, AE BKT ±1 EV (1/2 s, 1 s, 1/4 s), long-exposure NR off, intervalometer.
+- File diagnostics before the first session: [colab/raw_diagnostics.ipynb](colab/raw_diagnostics.ipynb).
+
 ### Asteroids, comets and NEOs
 
 The `smallbodies` stage checks which known small bodies were in the frame and measures them in the recording.

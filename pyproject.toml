@@ -23,6 +23,8 @@ gpu = ["torch>=2.2", "av>=12"]
 nvdec = ["PyNVVideoCodec>=1.0"]
 astro = ["scipy>=1.10", "astropy>=6", "skyfield>=1.49", "sgp4>=2.23", "pandas>=2", "pyarrow>=14"]
 report = ["matplotlib>=3.8", "pypdf>=4"]
+# Zdjęcia RAW (RAF, X-Trans) — LibRaw.
+raw = ["rawpy>=0.21"]
 dev = ["pytest>=7"]
 
 [project.scripts]
