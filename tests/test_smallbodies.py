@@ -136,3 +136,18 @@ def test_match_fast_neo_to_track():
     assert len(m) == 1 and m[0]["track_id"] == 7 and m[0]["sep_deg"] < 0.01
     slow = dict(body, ra_rate=20.0)                  # planetoida pasa głównego: tempo niezgodne
     assert SB.match_tracks([track], [slow], t0 + timedelta(seconds=100), t0, 0.0, {"track_match_deg": 0.2}) == []
+
+
+def test_empirical_error_catches_block_noise():
+    """Kompresja wideo: szum w blokach 6×6 px (skorelowany). Wzór z σ piksela go zaniża,
+    rozrzut apertur wokół obiektu — nie."""
+    rng = np.random.default_rng(5)
+    blocks = rng.normal(0, 1.0, (9, 9))
+    img = np.kron(blocks, np.ones((6, 6)))[:49, :49] + 100.0
+    formal = SB.photometry(img, 24.0, 24.0, 3, 6, 10)
+    emp = SB.photometry(img, 24.0, 24.0, 3, 6, 10, empirical=True)
+    assert emp["err"] > 1.5 * formal["err"]
+    white = rng.normal(0, 1.0, (49, 49)) + 100.0
+    e_w = SB.empirical_err(white, 24.0, 24.0, 3)
+    f_w = SB.photometry(white, 24.0, 24.0, 3, 6, 10)["err"]
+    assert 0.5 < e_w / f_w < 2.0                           # szum biały: obie metody zgodne

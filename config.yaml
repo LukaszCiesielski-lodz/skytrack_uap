@@ -221,7 +221,8 @@ smallbodies:
   enabled: auto              # auto | off
   api_url: https://ssd-api.jpl.nasa.gov/sb_ident.api
   gaia_url: https://vizier.cds.unistra.fr/viz-bin/asu-tsv
-  timeout_s: 120
+  timeout_s: 180             # JPL przy polu 30° potrafi odpowiadać > 2 min
+  retries: 3
   vmag_lim: 13.0             # planetoidy i komety jaśniejsze niż tyle (zasięg stosu 5 min ~11–12 mag)
   neo_vmag_lim: 16.0         # NEO także słabsze (na liście; pomiar powie „za słaba”)
   site_round_deg: 0.1        # do JPL idą współrzędne zaokrąglone (~10 km): dla NEO na 0,01 au błąd ~1″

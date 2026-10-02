@@ -96,12 +96,20 @@ def fetch_sbident(params: dict, scfg: dict) -> dict:
     url = str(scfg.get("api_url", "https://ssd-api.jpl.nasa.gov/sb_ident.api"))
     full = url + "?" + urllib.parse.urlencode(params, safe="-_:")
     req = urllib.request.Request(full, headers={"User-Agent": "skyhunt (github.com/LukaszCiesielski-lodz/skytrack_uap)"})
-    try:
-        with urllib.request.urlopen(req, timeout=float(scfg.get("timeout_s", 120))) as r:
-            return json.loads(r.read().decode("utf-8"))
-    except urllib.error.HTTPError as e:   # 400: szczegóły w treści odpowiedzi
-        body = e.read().decode("utf-8", "replace")[:300]
-        raise RuntimeError(f"JPL sb_ident HTTP {e.code}: {body}") from e
+    tries = max(1, int(scfg.get("retries", 3)))
+    for k in range(tries):
+        try:
+            with urllib.request.urlopen(req, timeout=float(scfg.get("timeout_s", 180))) as r:
+                return json.loads(r.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:   # 400: szczegóły w treści odpowiedzi; 5xx: ponów
+            body = e.read().decode("utf-8", "replace")[:300]
+            if e.code < 500 or k == tries - 1:
+                raise RuntimeError(f"JPL sb_ident HTTP {e.code}: {body}") from e
+        except (TimeoutError, urllib.error.URLError) as e:   # JPL bywa wolne przy dużym polu
+            if k == tries - 1:
+                raise RuntimeError(f"JPL sb_ident: {e} (po {tries} próbach)") from e
+        log.info("JPL sb_ident: próba %d/%d nieudana, ponawiam", k + 1, tries)
+    raise RuntimeError("JPL sb_ident: brak odpowiedzi")
 
 
 def parse_sbident(js: dict, *, is_neo: bool = False) -> list[dict]:
@@ -260,8 +268,10 @@ def y_to_linear(y: np.ndarray, transfer: str | float = "bt709", full_range: bool
 
 # ---------------------------------------------------------------- fotometria
 
-def photometry(img: np.ndarray, cx: float, cy: float, r: float, r_in: float, r_out: float) -> dict:
-    """Apertura kołowa, tło = mediana pierścienia, σ piksela z MAD pierścienia."""
+def photometry(img: np.ndarray, cx: float, cy: float, r: float, r_in: float, r_out: float,
+               *, empirical: bool = False) -> dict:
+    """Apertura kołowa, tło = mediana pierścienia, σ piksela z MAD pierścienia. ``empirical``:
+    błąd = większy z wzoru i z rozrzutu apertur wokół (``empirical_err``) — dla obrazów wideo."""
     h, w = img.shape
     yy, xx = np.mgrid[0:h, 0:w]
     d = np.hypot(xx - cx, yy - cy)
@@ -271,7 +281,31 @@ def photometry(img: np.ndarray, cx: float, cy: float, r: float, r_in: float, r_o
     npx, nann = int(ap.sum()), int(ann.sum())
     flux = float((img[ap] - bg).sum())
     err = sig * math.sqrt(npx * (1 + npx / max(nann, 1)))
+    if empirical:
+        e2 = empirical_err(img, cx, cy, r)
+        if math.isfinite(e2):
+            err = max(err, e2)
     return {"flux": flux, "err": err, "snr": flux / err, "bg": bg, "sigma": sig, "peak": float(img[ap].max())}
+
+
+def empirical_err(img: np.ndarray, cx: float, cy: float, r: float, radii=(12.0, 17.0), n: int = 12) -> float:
+    """Szum strumienia w aperturze zmierzony wprost: rozrzut sum w aperturach rozstawionych wokół
+    obiektu. Kompresja H.264 wygładza szum pojedynczych pikseli (MAD pierścienia wychodzi ~0)
+    i zostawia skorelowane bloki — wzór na szum z σ piksela zaniżałby błąd i zawyżał zasięg."""
+    h, w = img.shape
+    yy, xx = np.mgrid[0:h, 0:w]
+    bg = float(np.median(img[np.hypot(xx - cx, yy - cy) > r + 5]))
+    fluxes = []
+    for rad in radii:
+        for k in range(n):
+            a = 2 * math.pi * (k + 0.5 * (rad == radii[-1])) / n
+            px, py = cx + rad * math.cos(a), cy + rad * math.sin(a)
+            if r <= px < w - r and r <= py < h - r:
+                fluxes.append(float((img[np.hypot(xx - px, yy - py) <= r] - bg).sum()))
+    if len(fluxes) < 6:
+        return float("nan")
+    f = np.asarray(fluxes)
+    return float(1.4826 * np.median(np.abs(f - np.median(f))))
 
 
 def centroid(img: np.ndarray, cx: float, cy: float, search: float, box: int = 2) -> tuple[float, float]:
@@ -478,7 +512,7 @@ def run(outdir: Path, video: Path, meta, cfg: dict, *, camera, clock, t0: dateti
         st = stacks[nt + j]
         if st.mean is None:
             continue
-        ph = photometry(st.mean, *st.center, r_ap, r_in, r_out)
+        ph = photometry(st.mean, *st.center, r_ap, r_in, r_out, empirical=True)
         if ph["peak"] >= sat or ph["snr"] < 10:
             continue
         zr2.append(r2_of(float(sx[i]), float(sy[i])))
@@ -503,7 +537,7 @@ def run(outdir: Path, video: Path, meta, cfg: dict, *, camera, clock, t0: dateti
             r["status"] = "przy krawędzi (okno poza kadrem)"
             continue
         cx, cy = st.center
-        ph = photometry(st.mean, cx, cy, r_ap, r_in, r_out)
+        ph = photometry(st.mean, cx, cy, r_ap, r_in, r_out, empirical=True)
         mx, my = centroid(st.mean, cx, cy, float(scfg["search_px"]))
         r.update(measured=True, snr=ph["snr"], offset_arcsec=math.hypot(mx - cx, my - cy) * scale,
                  stamp=f"b{k}", stamp_cx=cx, stamp_cy=cy)
@@ -524,7 +558,9 @@ def run(outdir: Path, video: Path, meta, cfg: dict, *, camera, clock, t0: dateti
     tf = outdir / "tracks_final.parquet"
     if tf.exists() and bodies:
         final = pd.read_parquet(tf)
-        matches = match_tracks(final[final["kind"] != "sat"].to_dict("records"), bodies, t_query, t0, delta_s, scfg)
+        if len(final) and "kind" in final:              # nagranie bez torów: pusta tabela bez kolumn
+            matches = match_tracks(final[final["kind"] != "sat"].to_dict("records"), bodies, t_query, t0, delta_s,
+                                   scfg)
 
     pd.DataFrame(rows, columns=COLS).to_csv(outdir / "smallbodies.csv", index=False)
     pd.DataFrame(matches, columns=TRACK_COLS).to_csv(outdir / "smallbodies_tracks.csv", index=False)

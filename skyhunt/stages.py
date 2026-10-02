@@ -608,7 +608,7 @@ def report(ctx: StageContext) -> dict:
     icfg = ctx.cfg["iod"]
     final = pd.read_parquet(ctx.outdir / "tracks_final.parquet")
     air = ctx.outdir / "adsb_matches.csv"
-    if air.exists():                                   # samoloty z ADS-B nie idą do zgłoszeń satelitarnych
+    if air.exists() and "track_id" in final:          # samoloty z ADS-B nie idą do zgłoszeń satelitarnych
         final = final[~final["track_id"].isin(pd.read_csv(air)["track_id"])]
     path, n = iod.export(ctx.outdir / "report", final,
                          pd.read_parquet(ctx.outdir / "track_sky.parquet"), ctx.read_json("time_sync.json"),

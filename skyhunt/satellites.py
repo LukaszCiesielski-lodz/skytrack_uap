@@ -594,7 +594,7 @@ def synchronize(observer: Observer, catalog: Catalog, tracks: list[TrackSky], gr
     samego zegara aparatu — błąd elementów jednego Starlinka przechodził na cały czas."""
     cands = [t for t in tracks if is_sync_candidate(t, icfg)]
     windows = [float(icfg["window_sigma"]) * prior_sigma_s]
-    if search_s > windows[0]:
+    if search_s > windows[0] and cands:   # bez kandydatów szerokie okno to tylko kwadrans liczenia
         windows.append(float(search_s))
     last_grid = None
     for W in windows:

@@ -73,7 +73,7 @@ def export(outdir: Path, final, points, sync: dict, wcsinfo: dict, identificatio
     station, cond, unknown = int(icfg["station"]), str(icfg["condition"]), str(icfg["unknown_object"])
     periodic = float(classify_cfg["periodic_min_power"])
     lines = []
-    for _, t in final.sort_values("tau0").iterrows():
+    for _, t in (final.sort_values("tau0") if len(final) else final).iterrows():   # nagranie bez torów
         tid = int(t["track_id"])
         is_sat = t["kind"] == "sat"
         if not is_sat and not (int(t["n"]) >= int(icfg["unid_min_points"])

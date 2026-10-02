@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## Poprawki po sesji 1.10.2026 — 2026-10-02
+
+- Raport i IOD nie wywracają się na nagraniu bez torów (pusta `tracks_final` bez kolumn); `smallbodies` też (`KeyError: 'kind'`).
+- Synchronizacja: bez kandydatów na satelity nie ma szerokiego przesiewu ±2 h (DSCF4663/4665: 15–28 min liczenia na pustym nagraniu).
+- `smallbodies`: błąd fotometrii = większy z wzoru i z rozrzutu apertur wokół obiektu. Kompresja H.264 wygładza szum pikseli, więc sam wzór dawał zasięg stosu 17–30 mag. JPL: limit 180 s i 3 próby.
+
 ## Gwiazda-podpowiedź dla każdego pliku — 2026-10-01
 
 - Komórka „Nagrania”: opcjonalne 4. pole w `NEW_SITES` (np. `(lat, lon, wys, 'Altair')`) trafia do `sites.yaml` jako `hint_star` i nadpisuje `astrometry.hint_star` tylko dla tego pliku. Plate solve kadru bez Denebu (Kasjopeja, Orzeł) nie traci wtedy czasu na próbę z błędną podpowiedzią.
