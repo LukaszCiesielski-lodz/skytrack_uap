@@ -170,3 +170,17 @@ def test_torch_stack_matches_cpu_and_time_maps():
     tm = TimeMaps(P(), 0.0, 100.0, 20.0)
     x, y = tm.at(37.0)
     assert np.allclose(x, [1.0 + 18.5, 2.0 + 18.5]) and np.allclose(y, [3.0 - 3.7, 4.0 - 3.7])
+
+
+def test_flatten_removes_vignetting_keeps_stars():
+    pytest.importorskip("scipy")
+    pytest.importorskip("matplotlib")
+    from skyhunt.photo_report import flatten
+
+    h, w = 240, 360
+    yy, xx = np.mgrid[0:h, 0:w]
+    vign = 1000 * np.exp(-(((xx - w / 2) / 150) ** 2 + ((yy - h / 2) / 110) ** 2))
+    star = 300 * np.exp(-((xx - 300) ** 2 + (yy - 40) ** 2) / 4.0)
+    f = flatten(vign + star, box=24)
+    assert abs(float(np.median(f))) < 20 and float(np.percentile(np.abs(f), 90)) < 40
+    assert f[40, 300] > 250                                    # gwiazda w rogu zostaje

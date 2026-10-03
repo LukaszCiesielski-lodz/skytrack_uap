@@ -29,6 +29,22 @@ def rgb_preview(rgb: np.ndarray) -> np.ndarray:
     return np.clip(np.arcsinh(8 * x) / np.arcsinh(8), 0, 1)
 
 
+def flatten(img: np.ndarray, box: int = 48) -> np.ndarray:
+    """Odjęcie tła wielkoskalowego (winietowanie f/1.0 + łuna miasta): mediana w blokach ``box``
+    px, wygładzona i powiększona do pełnego obrazu. Do pokazania gwiazd równo w całym kadrze."""
+    from scipy.ndimage import median_filter, zoom
+
+    a = np.nan_to_num(img, nan=float(np.nanmedian(img)))
+    h, w = a.shape
+    hb, wb = h // box, w // box
+    blocks = np.median(a[:hb * box, :wb * box].reshape(hb, box, wb, box), axis=(1, 3))
+    blocks = median_filter(blocks, size=3, mode="nearest")
+    bg = zoom(blocks, (h / hb, w / wb), order=1)[:h, :w]
+    if bg.shape != a.shape:
+        bg = np.pad(bg, ((0, h - bg.shape[0]), (0, w - bg.shape[1])), mode="edge")
+    return a - bg
+
+
 def build(outdir: Path, folder: Path, cfg: dict) -> list[str]:
     import pandas as pd
     from astropy.io import fits
@@ -61,10 +77,31 @@ def build(outdir: Path, folder: Path, cfg: dict) -> list[str]:
         fig.suptitle(f"skyhunt — {folder.name} — stos {classes[deep]['frames']} zdjęć "
                      f"({classes[deep]['exposure_s']:g} s, {deep})", x=0.02, ha="left", fontsize=13)
         ax = fig.add_axes([0.02, 0.1, 0.96, 0.82])
-        st = sky_stretch(np.nan_to_num(img, nan=float(np.nanmedian(img))))
+        flat = flatten(img)
+        st = sky_stretch(flat)
         draw_sky(ax, st, wcs, (0, st.shape[1], 0, st.shape[0]), rcfg, always, max_px=2100)
-        fig.text(0.02, 0.03, "stos wyrównany modelem nieruchomej kamery (obrót nieba), odrzucone jasne piksele "
-                             "przejściowe (kreski); niebieskie linie: konstelacje", fontsize=8)
+        fig.text(0.02, 0.03, "stos wyrównany do obrotu nieba i ruchu statywu, bez kresek (odrzucone jasne piksele "
+                             "przejściowe); tło wielkoskalowe (winietowanie, łuna) odjęte; niebieskie linie: konstelacje",
+                 fontsize=8)
+        pdf.savefig(fig)
+
+        # wycinki w pełnej skali stosu: środek i rogi — ocena kształtu gwiazd (koma, ruch, ostrość)
+        fig = Figure(figsize=A4)
+        fig.suptitle(f"Kształt gwiazd w stosie ({deep}): środek i rogi, 160×160 px (superpiksele 3×3)",
+                     x=0.02, ha="left", fontsize=12)
+        h, w = flat.shape
+        s = 160
+        spots = {"lewy górny": (0, 0), "prawy górny": (0, w - s), "środek": (h // 2 - s // 2, w // 2 - s // 2),
+                 "lewy dolny": (h - s, 0), "prawy dolny": (h - s, w - s)}
+        pos = {"lewy górny": (0.04, 0.52), "prawy górny": (0.66, 0.52), "środek": (0.35, 0.30),
+               "lewy dolny": (0.04, 0.06), "prawy dolny": (0.66, 0.06)}
+        for name, (y0, x0) in spots.items():
+            cut = flat[y0:y0 + s, x0:x0 + s]
+            a = fig.add_axes([*pos[name], 0.3, 0.4])
+            a.imshow(sky_stretch(cut), cmap="gray", vmin=0, vmax=1, interpolation="nearest")
+            a.set_title(name, fontsize=8)
+            a.set_xticks([])
+            a.set_yticks([])
         pdf.savefig(fig)
 
         fig = Figure(figsize=A4)
@@ -88,7 +125,8 @@ def build(outdir: Path, folder: Path, cfg: dict) -> list[str]:
         ] + [f"UWAGA: {w}" for w in sess.get("warnings", [])]
         fig.text(0.02, 0.92, "\n".join(lines), family="monospace", fontsize=8, va="top")
         panels = [("bg_median", "tło (mediana) [DN·9]"), ("noise_mad", "szum σ [DN·9]"),
-                  ("drift", "ruch aparatu z plate solve (statyw) [px]"), ("rejected_frac", "odrzucone piksele")]
+                  ("drift", "ruch aparatu z plate solve (statyw) [px]"),
+                  ("rejected_frac", "poza kadrem odniesienia + odrzucone kreski (ułamek pikseli)")]
         drift = proc.get("pointing_drift") or []
         for k, (col, label) in enumerate(panels):
             a = fig.add_axes([0.07 + (k % 2) * 0.48, 0.37 - (k // 2) * 0.3, 0.4, 0.22])
