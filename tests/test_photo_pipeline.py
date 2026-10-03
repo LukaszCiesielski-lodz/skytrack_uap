@@ -135,3 +135,38 @@ def test_pointing_model_interpolates_camera_creep():
     assert np.allclose(pm.coarse(20.0)[0], ra + 10.0 + 2.0)          # poza zakresem: ostatnia epoka
     d = pointing_drift(Cam(0.0), [Cam(0.0), Cam(2.0)], [0.0, 10.0], 10.0, 5.0)
     assert [round(v["dx_px"], 6) for v in d] == [0.0, 2.0]
+
+
+def test_torch_stack_matches_cpu_and_time_maps():
+    pytest.importorskip("scipy")
+    torch = pytest.importorskip("torch")
+    from skyhunt.photo_stages import StackAccumulator, TimeMaps, TorchStackAccumulator, coarse_grid
+
+    rng = np.random.default_rng(1)
+    h, w = 40, 64
+    gx, gy = coarse_grid((h, w), (8, 6))
+    cpu = StackAccumulator((h, w), k=5.0, warmup=2, channels=3)
+    gpu = TorchStackAccumulator((h, w), k=5.0, warmup=2, channels=3, device="cpu")
+    for i in range(6):
+        lum = (100 + rng.normal(0, 1, (h, w))).astype(np.float32)
+        rgb = np.stack([lum / 3] * 3, axis=-1).astype(np.float32)
+        xc, yc = gx + 0.3 * i, gy - 0.2 * i
+        r1 = cpu.add_photo(lum, rgb, xc, yc, 1.0)
+        r2 = gpu.add_photo(lum, rgb, xc, yc, 1.0)
+        assert r1 == pytest.approx(r2, abs=0.02)
+    m1, m2 = cpu.mean(), gpu.mean()
+    inner = (slice(3, 35), slice(3, 55))
+    assert np.allclose(m1[inner], m2[inner], atol=1e-3)
+    assert np.allclose(cpu.mean_rgb()[inner], gpu.mean_rgb()[inner], atol=1e-3)
+    st = gpu.state()
+    again = TorchStackAccumulator((h, w), k=5.0, warmup=2, channels=3, device="cpu")
+    again.load({f"ev0_{k}": v for k, v in st.items()}, "ev0_")
+    assert np.allclose(again.mean()[inner], m2[inner]) and again.frames == 6
+
+    class P:
+        def coarse(self, tau):
+            return np.array([1.0, 2.0]) + 0.5 * tau, np.array([3.0, 4.0]) - 0.1 * tau
+
+    tm = TimeMaps(P(), 0.0, 100.0, 20.0)
+    x, y = tm.at(37.0)
+    assert np.allclose(x, [1.0 + 18.5, 2.0 + 18.5]) and np.allclose(y, [3.0 - 3.7, 4.0 - 3.7])

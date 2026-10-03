@@ -340,6 +340,117 @@ class StackAccumulator:
         if self.rgb is not None and f"{prefix}rgb" in d:
             self.rgb = d[f"{prefix}rgb"]
 
+    def add_photo(self, lum: np.ndarray, rgb: np.ndarray | None, xc: np.ndarray, yc: np.ndarray,
+                  sigma: float) -> float:
+        """Wyrównanie (mapy z siatki zgrubnej [gy, gx]) + dodanie; zwraca odsetek odrzuconych pikseli."""
+        shape = self.sum.shape
+        xmap, ymap = upsample_map(xc, shape), upsample_map(yc, shape)
+        aligned = warp_to_reference(lum, xmap, ymap)
+        rgb_al = (np.stack([warp_to_reference(rgb[..., k], xmap, ymap) for k in range(3)], axis=-1)
+                  if (self.rgb is not None and rgb is not None) else None)
+        return float(1 - self.add(aligned, sigma, rgb_al).mean())
+
+
+class TorchStackAccumulator:
+    """To samo co ``StackAccumulator`` na GPU: siatka próbkowania z mapy zgrubnej (interpolacja
+    dwuliniowa, węzły od brzegu do brzegu = ``align_corners``), ``grid_sample`` luminancji i RGB
+    naraz, sumy i odrzucanie na karcie. Na CPU wyrównanie 4 kanałów 2,7 Mpx trwało ~1 s/zdjęcie."""
+
+    def __init__(self, shape: tuple[int, int], k: float, warmup: int, channels: int = 0, device: str = "cuda"):
+        import torch
+
+        self.torch, self.dev = torch, torch.device(device)
+        self.shape = tuple(shape)
+        self.sum = torch.zeros(self.shape, device=self.dev)
+        self.cnt = torch.zeros(self.shape, dtype=torch.int32, device=self.dev)
+        self.rgbsum = torch.zeros((3,) + self.shape, device=self.dev) if channels else None
+        self.k, self.warmup, self.frames = float(k), int(warmup), 0
+
+    @property
+    def rgb(self):
+        return self.rgbsum
+
+    @property
+    def n(self) -> np.ndarray:
+        return self.cnt.cpu().numpy().astype(np.uint16)
+
+    def add_photo(self, lum: np.ndarray, rgb: np.ndarray | None, xc: np.ndarray, yc: np.ndarray,
+                  sigma: float) -> float:
+        t = self.torch
+        F = t.nn.functional
+        h, w = self.shape
+        norm = np.stack([2 * np.asarray(xc, np.float32) / (w - 1) - 1, 2 * np.asarray(yc, np.float32) / (h - 1) - 1])
+        coarse = t.from_numpy(norm.astype(np.float32))[None].to(self.dev)
+        grid = F.interpolate(coarse, size=(h, w), mode="bilinear", align_corners=True)[0].permute(1, 2, 0)[None]
+        chans = [lum] + ([rgb[..., k] for k in range(3)] if (self.rgbsum is not None and rgb is not None) else [])
+        img = t.from_numpy(np.ascontiguousarray(np.stack(chans), dtype=np.float32))[None].to(self.dev)
+        out = F.grid_sample(img, grid, mode="bilinear", padding_mode="zeros", align_corners=True)[0]
+        a = out[0]
+        ok = (grid[0, ..., 0].abs() <= 1) & (grid[0, ..., 1].abs() <= 1) & t.isfinite(a)
+        if self.frames >= self.warmup and sigma > 0:
+            mean = self.sum / self.cnt.clamp(min=1)
+            ok &= (self.cnt == 0) | (a <= mean + self.k * float(sigma))
+        okf = ok.float()
+        self.sum += t.nan_to_num(a) * okf
+        self.cnt += ok.int()
+        if self.rgbsum is not None and out.shape[0] == 4:
+            self.rgbsum += t.nan_to_num(out[1:]) * okf
+        self.frames += 1
+        return float(1 - okf.mean().item())
+
+    def mean(self) -> np.ndarray:
+        m = (self.sum / self.cnt.clamp(min=1)).cpu().numpy()
+        return np.where(self.cnt.cpu().numpy() > 0, m, np.nan).astype(np.float32)
+
+    def mean_rgb(self) -> np.ndarray | None:
+        if self.rgbsum is None:
+            return None
+        m = (self.rgbsum / self.cnt.clamp(min=1)).permute(1, 2, 0).cpu().numpy()
+        return np.where(self.cnt.cpu().numpy()[..., None] > 0, m, np.nan).astype(np.float32)
+
+    def state(self) -> dict:
+        d = {"sum": self.sum.cpu().numpy(), "n": self.n, "frames": np.array(self.frames)}
+        if self.rgbsum is not None:
+            d["rgb"] = self.rgbsum.permute(1, 2, 0).cpu().numpy()
+        return d
+
+    def load(self, d: dict, prefix: str) -> None:
+        t = self.torch
+        self.sum = t.from_numpy(np.asarray(d[f"{prefix}sum"], np.float32)).to(self.dev)
+        self.cnt = t.from_numpy(np.asarray(d[f"{prefix}n"], np.int32)).to(self.dev)
+        self.frames = int(d[f"{prefix}frames"])
+        if self.rgbsum is not None and f"{prefix}rgb" in d:
+            self.rgbsum = t.from_numpy(np.asarray(d[f"{prefix}rgb"], np.float32)).permute(2, 0, 1).contiguous().to(self.dev)
+
+
+def stack_device(pcfg: dict) -> str | None:
+    """``photo.device``: auto (GPU, jeśli jest) | cuda | cpu."""
+    if str(pcfg.get("device", "auto")) == "cpu":
+        return None
+    try:
+        import torch
+
+        return "cuda" if torch.cuda.is_available() else None
+    except ImportError:
+        return None
+
+
+class TimeMaps:
+    """Mapy zgrubne z ``PointingModel`` liczone w węzłach co ``step_s`` (astropy jest wolne:
+    2 wywołania na zdjęcie to ~1 s), między węzłami interpolacja liniowa — obrót nieba i ruch
+    statywu są na takim odcinku praktycznie liniowe."""
+
+    def __init__(self, pointing, t_min: float, t_max: float, step_s: float):
+        n = max(2, int(np.ceil((t_max - t_min) / max(step_s, 1e-3))) + 1)
+        self.t = np.linspace(t_min, t_max, n)
+        xs, ys = zip(*(pointing.coarse(float(tt)) for tt in self.t))
+        self.x, self.y = np.stack(xs), np.stack(ys)
+
+    def at(self, tau: float) -> tuple[np.ndarray, np.ndarray]:
+        k = int(np.clip(np.searchsorted(self.t, tau) - 1, 0, len(self.t) - 2))
+        w = float(np.clip((tau - self.t[k]) / (self.t[k + 1] - self.t[k]), 0.0, 1.0))
+        return (1 - w) * self.x[k] + w * self.x[k + 1], (1 - w) * self.y[k] + w * self.y[k + 1]
+
 
 @PHOTO_PIPELINE.stage("process", sections=("photo", "site"), requires=("astrometry",), rev=2, roles=("sky",))
 def process(ctx: StageContext) -> dict:
@@ -374,8 +485,15 @@ def process(ctx: StageContext) -> dict:
     (ctx.log.warning if dmax > 1.0 else ctx.log.info)(
         "[%s] ruch aparatu względem nieruchomego modelu: do %.2f px (uwzględniony w stosie)", ctx.input_path.name, dmax)
     classes = [c for c in pcfg["stack_classes"] if c in set(ph["ev"])]
-    acc = {c: StackAccumulator((h, w), float(pcfg["stack_reject_sigma"]), int(pcfg["stack_warmup"]),
-                               channels=3 if c == "ev0" else 0) for c in classes}
+    dev = stack_device(pcfg)
+    if dev:
+        acc = {c: TorchStackAccumulator((h, w), float(pcfg["stack_reject_sigma"]), int(pcfg["stack_warmup"]),
+                                        channels=3 if c == "ev0" else 0, device=dev) for c in classes}
+    else:
+        acc = {c: StackAccumulator((h, w), float(pcfg["stack_reject_sigma"]), int(pcfg["stack_warmup"]),
+                                   channels=3 if c == "ev0" else 0) for c in classes}
+    tm = TimeMaps(pointing, float(ph["tau_mid"].min()), float(ph["tau_mid"].max()),
+                  float(pcfg.get("pointing_step_s", 20.0)))
     ckpt = ctx.outdir / "process_ckpt.npz"
     start = 0
     stats: list[dict] = []
@@ -401,8 +519,17 @@ def process(ctx: StageContext) -> dict:
     t0 = time.perf_counter()
     every = int(pcfg["checkpoint_every"])
     caches = [cache / f"lum_{i:05d}.npy" for i in todo] if cache is not None else None
-    ctx.log.info("[%s] dekodowanie RAF w %d procesach", ctx.input_path.name, decode_workers(pcfg))
-    for j, (lum, rgb, sat) in load_photos([by_name[ph["file"][i]] for i in todo], pcfg, caches):
+    ctx.log.info("[%s] dekodowanie RAF w %d procesach, stos na %s", ctx.input_path.name, decode_workers(pcfg),
+                 "GPU" if dev else "CPU")
+    loader = load_photos([by_name[ph["file"][i]] for i in todo], pcfg, caches)
+    wait = 0.0
+    while True:
+        tw = time.perf_counter()
+        try:
+            j, (lum, rgb, sat) = next(loader)
+        except StopIteration:
+            break
+        wait += time.perf_counter() - tw
         i = todo[j]
         rgb = rgb.astype(np.float32)
         sig = robust_sigma(lum)
@@ -410,15 +537,11 @@ def process(ctx: StageContext) -> dict:
         row = {"photo": i, "file": ph["file"][i], "ev": c, "tau_mid": float(ph["tau_mid"][i]),
                "bg_median": float(np.median(lum[::7, ::7])), "noise_mad": sig, "n_saturated": int(sat.sum())}
         if c in acc:
-            px, py = pointing.coarse(float(ph["tau_mid"][i]))
-            xmap = upsample_map(np.asarray(px, float).reshape(gx.shape), (h, w))
-            ymap = upsample_map(np.asarray(py, float).reshape(gx.shape), (h, w))
-            row["shift_px"] = float(np.hypot(xmap[h // 2, w // 2] - w // 2, ymap[h // 2, w // 2] - h // 2))
-            aligned = warp_to_reference(lum, xmap, ymap)
-            rgb_al = (np.stack([warp_to_reference(rgb[..., k], xmap, ymap) for k in range(3)], axis=-1)
-                      if acc[c].rgb is not None else None)
-            ok = acc[c].add(aligned, sig, rgb_al)
-            row["rejected_frac"] = float(1 - ok.mean())
+            px, py = tm.at(float(ph["tau_mid"][i]))
+            xc, yc = px.reshape(gx.shape), py.reshape(gx.shape)
+            cy, cx = gx.shape[0] // 2, gx.shape[1] // 2
+            row["shift_px"] = float(np.hypot(xc[cy, cx] - gx[cy, cx], yc[cy, cx] - gy[cy, cx]))
+            row["rejected_frac"] = acc[c].add_photo(lum, rgb if acc[c].rgb is not None else None, xc, yc, sig)
         stats.append(row)
         done = j + 1
         if done % every == 0 and done < len(todo):
@@ -428,8 +551,9 @@ def process(ctx: StageContext) -> dict:
                 state.update({f"{cc}_{k}": v for k, v in acc[cc].state().items()})
             np.savez(ckpt, **state)
             pd.DataFrame(stats).to_csv(ctx.outdir / "frame_stats_part.csv", index=False)
-            ctx.log.info("[%s] stos: %d/%d zdjęć, %.1f zdj./s", ctx.input_path.name, i + 1, len(ph),
-                         done / (time.perf_counter() - t0))
+            el = time.perf_counter() - t0
+            ctx.log.info("[%s] stos: %d/%d zdjęć, %.1f zdj./s (czekanie na odczyt i dekodowanie %.0f%%)",
+                         ctx.input_path.name, i + 1, len(ph), done / el, 100 * wait / max(el, 1e-6))
     outputs = []
     info = {"reference_photo": int(ref_epoch["frame"]), "reference_tau_s": tau_ref, "shape": [h, w],
             "cache_dir": str(cache) if cache else None, "classes": {}, "pointing_drift": drift,
