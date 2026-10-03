@@ -774,7 +774,7 @@ def streaks(ctx: StageContext) -> dict:
 
 
 @PHOTO_PIPELINE.stage("link", sections=("streaks.link", "photo.inter_frame_gap_s"),
-                      requires=("streaks",), rev=1, roles=("sky",))
+                      requires=("streaks",), rev=2, roles=("sky",))
 def link(ctx: StageContext) -> dict:
     """Łańcuchy kresek jednego obiektu przez kolejne zdjęcia i przerwa g między zdjęciami serii."""
     import pandas as pd
@@ -799,8 +799,9 @@ def link(ctx: StageContext) -> dict:
                  len(multi), info["chain_lengths"][:5], info["n_single"])
     if timing["fitted"]:
         ctx.log.info("[%s] przerwa między zdjęciami serii g = %.3f ± %.3f s (config %.3f s; %d łańcuchów, "
-                     "residua końców %.2f px = %.1f ms)", ctx.input_path.name, timing["g_s"], timing["sigma_s"], g0,
-                     timing["n_chains"], timing["rms_px"], timing["rms_ms"])
+                     "residua końców %.2f px = %.1f ms; wspólny rozrzut startu serii %.0f ms z %d par)", ctx.input_path.name,
+                     timing["g_s"], timing["sigma_s"], g0, timing["n_chains"], timing["rms_px"], timing["rms_ms"],
+                     timing.get("set_jitter_ms", float("nan")), timing.get("set_jitter_pairs", 0))
     else:
         ctx.log.info("[%s] przerwa g: bez pomiaru (%s) — zostaje %.3f s z configu", ctx.input_path.name,
                      timing.get("note", "za mało danych"), g0)
@@ -1168,7 +1169,7 @@ def adsb(ctx: StageContext) -> dict:
 
 
 @PHOTO_PIPELINE.stage("report", sections=("report", "iod", "classify.periodic_min_power"),
-                      requires=("process", "adsb"), rev=2, roles=("sky",))
+                      requires=("process", "adsb"), rev=3, roles=("sky",))
 def report(ctx: StageContext) -> dict:
     """Mapa na głębokim stosie z torami, przebieg sesji, czas z satelitów, obiekty, IOD."""
     import pandas as pd

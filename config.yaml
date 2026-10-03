@@ -394,6 +394,8 @@ streaks:
     edge_px: 3               # koniec bliżej brzegu/maski niż tyle px = obcięty (bez czasu)
   link:
     max_gap_s: 6.0           # najdłuższa przerwa między kolejnymi kreskami łańcucha
+    merge_max_gap_s: 30.0    # sklejanie porwanych łańcuchów: przerwa do tyle s…
+    merge_fit_s: 12.0        # …ruch liniowy z ostatnich tyle s łańcucha
     pos_tol_px: 3.0          # zgodność końca z ruchem łańcucha: tyle px…
     timing_tol_s: 0.15       # …+ tyle sekund ruchu (nieznane g i odczyt migawki)
     perp_tol_px: 3.0         # odległość obciętego końca od toru

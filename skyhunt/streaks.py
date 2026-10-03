@@ -239,7 +239,7 @@ def refine_streak(diff: np.ndarray, p0: np.ndarray, p1: np.ndarray, dcfg: dict) 
     Y = p0[1] + ss[:, None] * u[1] + offs[None] * n[1]
     prof = map_coordinates(diff, [Y, X], order=1, mode="constant", cval=np.nan)
     cnt = np.isfinite(prof).sum(axis=1)
-    f = np.where(cnt >= max(1, len(offs) // 2), np.nanmean(prof, axis=1) * len(offs), np.nan)
+    f = np.where(cnt >= max(1, len(offs) // 2), np.nansum(prof, axis=1) / np.maximum(cnt, 1) * len(offs), np.nan)
     good = np.isfinite(f)
     if good.sum() < 8:
         return None
@@ -423,8 +423,55 @@ def link_chains(st, lcfg: dict, rolling_s: float, height: int) -> list[dict]:
         else:
             ch, items = best
             ch["items"], ch["photo"] = items, q["photo"]
+    chains = merge_chains(chains, rows, lcfg, rolling_s, height)
     chains.sort(key=lambda c: (rows[c["items"][0][0]]["tau_open"]))
     return chains
+
+
+def _chain_points(rows: list[dict], items, rolling_s: float, height: int) -> np.ndarray:
+    return np.array([e for k, o in items for e in endpoint_rows(rows[k], o, rolling_s, height)], float)
+
+
+def merge_chains(chains: list[dict], rows: list[dict], lcfg: dict, rolling_s: float, height: int) -> list[dict]:
+    """Sklejanie porwanych łańcuchów jednego obiektu (brak kilku kresek z rzędu: słaba kreska −1 EV,
+    maska jasnej gwiazdy). Ruch z końcówki łańcucha A (ostatnie ``merge_fit_s`` s, liniowo)
+    przedłużony na łańcuch B zaczynający się ≤ ``merge_max_gap_s`` s później; wszystkie czyste
+    końce B muszą leżeć w tolerancji rosnącej z przerwą (prędkość kątowa satelity się zmienia)."""
+    max_gap = float(lcfg.get("merge_max_gap_s", 30.0))
+    fit_s = float(lcfg.get("merge_fit_s", 12.0))
+    pos_tol, t_tol = float(lcfg["pos_tol_px"]), float(lcfg["timing_tol_s"])
+    single = [c for c in chains if len(c["items"]) < 2]
+    multi = sorted((c for c in chains if len(c["items"]) >= 2), key=lambda c: rows[c["items"][0][0]]["tau_open"])
+    i = 0
+    while i < len(multi):
+        A = multi[i]
+        PA = _chain_points(rows, A["items"], rolling_s, height)
+        t_end = float(PA[:, 2].max())
+        model = _fit_motion(PA[PA[:, 2] >= t_end - fit_s], 1) or _fit_motion(PA, 1)
+        best, best_score = None, 1.0
+        PA_last = _chain_points(rows, A["items"][-1:], rolling_s, height)
+        if model is not None:
+            for j in range(i + 1, len(multi)):
+                PB = _chain_points(rows, multi[j]["items"], rolling_s, height)
+                t_start = float(PB[:, 2].min())
+                gap = t_start - t_end
+                if gap <= 0 or gap > max_gap:
+                    continue
+                v = _speed(model, t_start)
+                tol = pos_tol + t_tol * v + 0.02 * v * gap
+                # tylko przez przerwę: A → pierwsza kreska B i B → ostatnia kreska A (ruch się zmienia)
+                score = _residual(_chain_points(rows, multi[j]["items"][:1], rolling_s, height), model) / tol
+                model_b = _fit_motion(PB[PB[:, 2] <= t_start + fit_s], 1)
+                if model_b is not None:
+                    score = max(score, _residual(PA_last, model_b) / tol)
+                if score < best_score:
+                    best, best_score = j, score
+        if best is None:
+            i += 1
+            continue
+        B = multi.pop(best)
+        A["items"], A["photo"] = A["items"] + B["items"], B["photo"]
+    return single + multi
 
 
 # ---------------------------------------------------------------- przerwa w serii
@@ -490,7 +537,8 @@ def fit_gap(st, chains: list[dict], g0: float, rolling_s: float, height: int, lc
     curv = np.polyfit(fine[sel] - dg, fv[sel], 2)[0] if len(fv[sel]) >= 3 else 0.0
     sigma = math.sqrt(max(red, 1.0) / curv) if curv > 0 else float("nan")
     res_px, res_ms = [], []
-    for P, w, d in data:
+    per_set: dict[int, dict[int, list[float]]] = {}      # seria → łańcuch → residua czasu [s]
+    for ci, (c, (P, w, d)) in enumerate(zip(use, data)):
         model = _fit_motion(P, d)
         if model is None:
             continue
@@ -500,8 +548,22 @@ def fit_gap(st, chains: list[dict], g0: float, rolling_s: float, height: int, lc
         v = np.array([_speed(model, t) for t in P[ok, 2]])
         res_px += list(r)
         res_ms += list(1000 * r / np.maximum(v, 1e-6))
+        tm, cx, cy = model
+        vx = np.polyval(np.polyder(cx), P[ok, 2] - tm)
+        vy = np.polyval(np.polyder(cy), P[ok, 2] - tm)
+        dt = ((P[ok, 0] - x) * vx + (P[ok, 1] - y) * vy) / np.maximum(vx ** 2 + vy ** 2, 1e-9)
+        sets = np.array([rows[kk]["set"] for kk, _ in c["items"] for _ in (0, 1)])[ok]
+        for s, e in zip(sets, dt):
+            per_set.setdefault(int(s), {}).setdefault(ci, []).append(float(e))
+    # wspólne przesunięcie całej serii w kilku łańcuchach naraz = niestały start serii (interwałometr)
+    prods = []
+    for chains_in_set in per_set.values():
+        means = [float(np.mean(v)) for v in chains_in_set.values()]
+        prods += [means[a] * means[b] for a in range(len(means)) for b in range(a + 1, len(means))]
+    cov = float(np.mean(prods)) if prods else float("nan")
     out.update({"fitted": bool(np.isfinite(sigma)), "dg_s": dg, "g_s": g0 + dg, "sigma_s": sigma, "n_points": npts,
                 "chi2_dof": red, "rms_px": float(np.sqrt(np.mean(np.square(res_px)))) if res_px else float("nan"),
                 "rms_ms": float(np.sqrt(np.mean(np.square(res_ms)))) if res_ms else float("nan"),
-                "at_grid_edge": bool(k in (0, len(grid) - 1))})
+                "set_jitter_ms": 1000 * math.sqrt(max(cov, 0.0)) if np.isfinite(cov) else float("nan"),
+                "set_jitter_pairs": len(prods), "at_grid_edge": bool(k in (0, len(grid) - 1))})
     return out

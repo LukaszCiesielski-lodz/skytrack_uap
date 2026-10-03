@@ -90,7 +90,7 @@ def test_end_clipped_and_sample_grid():
     assert sample_grid(coarse, (51, 81), [40.0], [25.0])[0] == pytest.approx(55.0)
 
 
-def synthetic_session(g_true=0.12, g0=0.10, n_sets=6, swap_seed=5):
+def synthetic_session(g_true=0.12, g0=0.10, n_sets=6, swap_seed=5, jitter_s=0.0, drop_set=None):
     """Dwa obiekty przez 6 serii bracketingu (0,5 s / 1 s / 0,25 s, co 4 s) + jedna samotna kreska.
     Czasy otwarcia w tabeli z nominalną przerwą g0, prawdziwe kreski z g_true."""
     import pandas as pd
@@ -100,20 +100,24 @@ def synthetic_session(g_true=0.12, g0=0.10, n_sets=6, swap_seed=5):
     objs = [lambda t: (100 + 40 * t + 0.08 * t * t, 300 + 10 * t), lambda t: (1500 - 30 * t, 100 + 25 * t)]
     rows = []
     for k in range(n_sets):
-        S = 4.0 * k + 0.3
+        S = 4.0 * k + 0.3 + (rng.normal(0, jitter_s) if jitter_s else 0.0)   # prawdziwy start (interwałometr)
+        S_nom = 4.0 * k + 0.3
         for m in range(3):
             true_open = S + sum(T[:m]) + m * g_true
-            nominal = S + sum(T[:m]) + m * g0
+            nominal = S_nom + sum(T[:m]) + m * g0
             for o, f in enumerate(objs):
                 a = np.array(f(true_open)) + rng.normal(0, 0.1, 2)
                 b = np.array(f(true_open + T[m])) + rng.normal(0, 0.1, 2)
                 swap = bool(rng.integers(0, 2))
+                if drop_set is not None and o == 0 and k == drop_set:
+                    continue
                 if swap:
                     a, b = b, a
-                rows.append({"photo": 3 * k + m, "tau_open": nominal, "exposure_s": T[m], "m": m, "xa": a[0], "ya": a[1],
+                rows.append({"photo": 3 * k + m, "set": k, "tau_open": nominal, "exposure_s": T[m], "m": m,
+                             "xa": a[0], "ya": a[1],
                              "xb": b[0], "yb": b[1], "ya_s": a[1], "yb_s": b[1], "clip_a": False, "clip_b": False,
                              "snr": 30.0, "err_a": 0.1, "err_b": 0.1, "obj": o, "swapped": swap})
-    rows.append({"photo": 7, "tau_open": 0.0, "exposure_s": 1.0, "m": 1, "xa": 900, "ya": 900, "xb": 950, "yb": 960,
+    rows.append({"photo": 7, "set": 2, "tau_open": 0.0, "exposure_s": 1.0, "m": 1, "xa": 900, "ya": 900, "xb": 950, "yb": 960,
                  "ya_s": 900, "yb_s": 960, "clip_a": False, "clip_b": False, "snr": 12.0, "err_a": 0.2, "err_b": 0.2,
                  "obj": 9, "swapped": False})
     df = pd.DataFrame(rows).sort_values("photo", kind="stable").reset_index(drop=True)
@@ -149,3 +153,24 @@ def test_photo_hint():
     assert photo_hint(5, 0.4, 20, 0.8, icfg)[0] == "samolot?"
     assert photo_hint(1, 8.0, 0, 0.0, icfg)[0] == "meteor?"
     assert photo_hint(1, 0.7, 0, 0.0, icfg)[0] == "pojedyncza kreska"
+
+
+def test_merge_chain_broken_by_missing_set(cfg):
+    from skyhunt.streaks import link_chains
+
+    st = synthetic_session(drop_set=2)            # obiekt 0 niewidoczny przez całą serię (> max_gap_s)
+    chains = link_chains(st, cfg["streaks"]["link"], 0.0, 1333)
+    assert sorted(len(c["items"]) for c in chains) == [1, 15, 18]
+    assert all(len({int(st["obj"][k]) for k, _ in c["items"]}) == 1 for c in chains)
+
+
+def test_set_jitter_estimate(cfg):
+    from skyhunt.streaks import fit_gap, link_chains
+
+    lcfg = cfg["streaks"]["link"]
+    calm = synthetic_session()
+    fit = fit_gap(calm, link_chains(calm, lcfg, 0.0, 1333), 0.10, 0.0, 1333, lcfg)
+    assert fit["set_jitter_pairs"] > 0 and fit["set_jitter_ms"] < 10
+    shaky = synthetic_session(jitter_s=0.05)      # start serii losowo ±50 ms, wspólny dla obu obiektów
+    fit = fit_gap(shaky, link_chains(shaky, lcfg, 0.0, 1333), 0.10, 0.0, 1333, lcfg)
+    assert fit["set_jitter_ms"] > 15

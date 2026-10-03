@@ -93,11 +93,13 @@ def build(outdir: Path, folder: Path, cfg: dict) -> list[str]:
         st = sky_stretch(flat)
         draw_sky(ax, st, wcs, (0, st.shape[1], 0, st.shape[0]), rcfg, always, max_px=2100)
         objs = objects(outdir, wcs)
-        draw_objects(ax, objs, labels=True)
-        fig.text(0.02, 0.03, "stos wyrównany do obrotu nieba i ruchu statywu, bez kresek (odrzucone jasne piksele "
-                             "przejściowe); tło wielkoskalowe (winietowanie, łuna) odjęte; niebieskie linie: konstelacje; kreski: "
-                             "zielone — satelity (NORAD), czerwone — niezidentyfikowane, pomarańczowe — samoloty (ADS-B)",
-                 fontsize=8)
+        n_major = sum(o["major"] for o in objs)
+        draw_objects(ax, [o for o in objs if o["major"]], labels=True)
+        fig.text(0.02, 0.025, "stos wyrównany do obrotu nieba i ruchu statywu, bez kresek (odrzucone jasne piksele "
+                              "przejściowe); tło wielkoskalowe (winietowanie, łuna) odjęte; niebieskie linie: konstelacje\n"
+                              f"kreski ({n_major} obiektów: satelity, samoloty, meteory, łańcuchy ≥ {MAJOR_MIN_STREAKS} kresek): "
+                              "zielone — satelity (NORAD), czerwone — niezidentyfikowane, pomarańczowe — samoloty (ADS-B); "
+                              f"{len(objs) - n_major} krótszych osobno", fontsize=8)
         pdf.savefig(fig)
 
         # wycinki w pełnej skali stosu: środek i rogi — ocena kształtu gwiazd (koma, ruch, ostrość)
@@ -182,6 +184,7 @@ def build(outdir: Path, folder: Path, cfg: dict) -> list[str]:
 # ---------------------------------------------------------------- obiekty (F2)
 
 C_AIR = "#ff9f1a"
+MAJOR_MIN_STREAKS = 3       # na mapie, w tabeli i na stronach obiektów: satelity, samoloty, meteory i łańcuchy ≥ tylu kresek
 
 
 def objects(outdir: Path, wcs) -> list[dict]:
@@ -224,7 +227,9 @@ def objects(outdir: Path, wcs) -> list[dict]:
         else:
             label = f"#{tid} {t['class_hint']}"
         out.append({"track_id": tid, "row": t, "segs": segs, "kind": kind, "pred": pred, "label": label, "air": a,
-                    "color": {"sat": C_SAT, "air": C_AIR}.get(kind, C_UNID)})
+                    "color": {"sat": C_SAT, "air": C_AIR}.get(kind, C_UNID),
+                    "major": kind in ("sat", "air") or int(t["n_streaks"]) >= MAJOR_MIN_STREAKS
+                    or str(t["class_hint"]) == "meteor?"})
     return out
 
 
@@ -302,6 +307,45 @@ def _sunlit_text(v) -> str:
     return "oświetlony" if bool(v) else "w cieniu Ziemi"
 
 
+def _minor_page(pdf, Figure, minor: list[dict], flat: np.ndarray) -> None:
+    """Pojedyncze kreski i łańcuchy po 2 kreski: położenie, kierunek, ostrość końców, S/N — żeby
+    odróżnić słabe prawdziwe obiekty od artefaktów (pasma odczytu, resztki gwiazd)."""
+    import pandas as pd
+
+    from .report import sky_stretch
+
+    segs = pd.concat([o["segs"].assign(n_streaks=int(o["row"]["n_streaks"])) for o in minor], ignore_index=True)
+    fig = Figure(figsize=A4)
+    fig.suptitle(f"Krótkie obiekty: {int((segs['n_streaks'] == 1).sum())} pojedynczych kresek, "
+                 f"{len(minor) - int((segs['n_streaks'] == 1).sum())} łańcuchów po 2 kreski (kandydaci)",
+                 x=0.02, ha="left", fontsize=12)
+    ax = fig.add_axes([0.02, 0.08, 0.58, 0.82])
+    ax.imshow(sky_stretch(flat[::2, ::2]), cmap="gray", vmin=0, vmax=1, interpolation="nearest",
+              extent=(-0.5, flat.shape[1] - 0.5, flat.shape[0] - 0.5, -0.5))
+    cols = {"ev0": "#4fc3ff", "ev+1": "#7dff7d", "ev-1": "#ff6b6b"}
+    for ev, g in segs.groupby("ev"):
+        ax.plot(np.stack([g["xa"], g["xb"]]), np.stack([g["ya"], g["yb"]]), color=cols.get(ev, "w"), lw=0.6,
+                alpha=0.7)
+    for ev, c in cols.items():
+        ax.plot([], [], color=c, label=ev)
+    ax.legend(fontsize=6, loc="lower right")
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_title("położenie (kolor = klasa jasności)", fontsize=8)
+    for k, (col, label, bins) in enumerate([("angle_deg", "kierunek [°] (0 = poziomo w układzie stosu)", 36),
+                                             ("psf_sigma", "ostrość końców σ [px] (0,3 = granica dopasowania)", 30),
+                                             ("snr", "S/N kreski", 30)]):
+        a = fig.add_axes([0.66, 0.66 - k * 0.29, 0.31, 0.2])
+        v = segs[col].to_numpy(float)
+        v = v[np.isfinite(v)]
+        if col == "snr":
+            v = np.clip(v, 0, 60)
+        a.hist(v, bins=bins, color="#888888")
+        a.set_title(label, fontsize=8)
+        a.tick_params(labelsize=7)
+    pdf.savefig(fig)
+
+
 def satellite_pages(pdf, Figure, outdir: Path, objs: list[dict], flat: np.ndarray, wcs, cfg: dict,
                     proc: dict) -> None:
     """Strony F2: czas z satelitów, tabela obiektów, strona na obiekt (tor na stosie + wycinki
@@ -320,8 +364,12 @@ def satellite_pages(pdf, Figure, outdir: Path, objs: list[dict], flat: np.ndarra
     fig.text(0.02, 0.92, "\n".join(lines), family="monospace", fontsize=7.5, va="top")
     pdf.savefig(fig)
 
+    major = [o for o in objs if o["major"]]
+    minor = [o for o in objs if not o["major"]]
+    if minor:
+        _minor_page(pdf, Figure, minor, flat)
     rows = []
-    for o in objs:
+    for o in major:
         t, a = o["row"], o["air"]
         if o["kind"] == "sat":
             who, name, why = f"{int(t['norad'])}", str(t["sat_name"]), str(t["match_reason"])
@@ -334,13 +382,15 @@ def satellite_pages(pdf, Figure, outdir: Path, objs: list[dict], flat: np.ndarra
         rows.append([f"#{o['track_id']}", {"sat": "satelita", "air": "samolot (ADS-B)"}.get(o["kind"], t["class_hint"]),
                      who, name[:26], _utc(t["utc_start"]), _utc(t["utc_end"]), int(t["n_streaks"]),
                      _f(t["omega_deg_s"], ".2f"), str(t["confidence"] or "–"), why[:70]])
-    _table_pages(pdf, Figure, "Obiekty — kreski na zdjęciach",
+    n1 = sum(int(o["row"]["n_streaks"]) == 1 for o in minor)
+    _table_pages(pdf, Figure, f"Obiekty — kreski na zdjęciach (bez {n1} pojedynczych kresek i {len(minor) - n1} "
+                              f"łańcuchów po 2 kreski: strona wyżej i tracks_final.csv)",
                  ["#", "klasa", "NORAD / lot", "nazwa", "UTC początek", "UTC koniec", "kresek", "°/s", "pewność",
                   "uzasadnienie"], rows)
 
     cache = Path(proc["cache_dir"]) if proc.get("cache_dir") else None
     st_full = sky_stretch(flat)
-    for o in objs[: int(cfg["report"].get("photo_object_pages", 60))]:
+    for o in major[: int(cfg["report"].get("photo_object_pages", 60))]:
         t = o["row"]
         fig = Figure(figsize=A4)
         fig.suptitle(f"#{o['track_id']} — " + o["label"].split(" ", 1)[-1], x=0.02, ha="left", fontsize=12)
