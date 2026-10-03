@@ -8,8 +8,7 @@ cache luminancji, głęboki stos per klasa jasności wyrównany modelem nierucho
 from __future__ import annotations
 
 import concurrent.futures as cf
-import shutil
-import tempfile
+import os
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Iterator
@@ -122,30 +121,42 @@ def _photos(ctx: StageContext):
     return pd.read_csv(ctx.outdir / "photos.csv")
 
 
-# ---------------------------------------------------------------- odczyt zdjęć (Drive → lokalnie)
+# ---------------------------------------------------------------- odczyt zdjęć (równolegle)
 
-def prefetch(paths: list[Path], workers: int, tmpdir: Path) -> Iterator[tuple[int, Path]]:
-    """Kopiuje pliki z Drive na dysk lokalny w kilku wątkach (Drive ~50 MB/s na wątek),
-    zwraca je po kolei i kasuje po użyciu. Kolejka ograniczona do 2·workers plików."""
-    tmpdir.mkdir(parents=True, exist_ok=True)
+def _load_one(path: str, sat_frac: float, cache: str | None):
+    """Proces roboczy: RAF → superpiksele (+ zapis luminancji do cache). RGB jako float16,
+    żeby mniej danych szło między procesami."""
+    from .raw import read_raw, superpixels
 
-    def copy(i: int) -> Path:
-        dst = tmpdir / paths[i].name
-        shutil.copyfile(paths[i], dst)
-        return dst
+    lum, rgb, sat = superpixels(read_raw(Path(path)), sat_frac=sat_frac)
+    if cache:
+        np.save(cache, lum.astype(np.float16))
+    return lum, rgb.astype(np.float16), sat
 
-    with cf.ThreadPoolExecutor(max_workers=max(1, workers)) as ex:
+
+def decode_workers(pcfg: dict) -> int:
+    """Rozpakowanie RAF z kompresją bezstratną (LibRaw) idzie w jednym wątku, ~2–3 s na zdjęcie,
+    więc dekodujemy w procesach: co najmniej ``photo.workers``, domyślnie rdzenie − 1."""
+    return max(int(pcfg.get("workers", 1)), (os.cpu_count() or 2) - 1, 1)
+
+
+def load_photos(paths: list[Path], pcfg: dict, cache_files: list | None = None
+                ) -> Iterator[tuple[int, tuple[np.ndarray, np.ndarray, np.ndarray]]]:
+    """Zdjęcia po kolei, dekodowane równolegle w procesach (kolejka 2 × liczba procesów)."""
+    import multiprocessing as mp
+
+    n = decode_workers(pcfg)
+    sat = float(pcfg["sat_frac"])
+    caches = cache_files or [None] * len(paths)
+    with cf.ProcessPoolExecutor(max_workers=n, mp_context=mp.get_context("spawn")) as ex:
         pending: dict[int, cf.Future] = {}
         nxt = 0
         for i in range(len(paths)):
-            while nxt < len(paths) and len(pending) < 2 * max(1, workers):
-                pending[nxt] = ex.submit(copy, nxt)
+            while nxt < len(paths) and len(pending) < 2 * n:
+                pending[nxt] = ex.submit(_load_one, str(paths[nxt]), sat,
+                                         str(caches[nxt]) if caches[nxt] else None)
                 nxt += 1
-            local = pending.pop(i).result()
-            try:
-                yield i, local
-            finally:
-                local.unlink(missing_ok=True)
+            yield i, pending.pop(i).result()
 
 
 def decode(path: Path, pcfg: dict):
@@ -193,19 +204,17 @@ def frames(ctx: StageContext) -> dict:
     edir.mkdir(exist_ok=True)
     out, shape = [], None
     paths = [by_name[ph["file"][i]] for i in idx]
-    with tempfile.TemporaryDirectory() as tmp:
-        for j, local in prefetch(paths, int(pcfg["workers"]), Path(tmp)):
-            i = idx[j]
-            lum, _, _ = decode(local, pcfg)
-            shape = lum.shape
-            name = f"epoch_{i:05d}.fits"
-            hdr = fits.Header()
-            hdr["PHOTO"] = (int(i), "numer zdjecia w sesji")
-            hdr["TAU_S"] = (float(ph["tau_mid"][i]), "srodek naswietlania od otwarcia 1. zdjecia [s]")
-            hdr["EXPTIME"] = float(ph["exposure_s"][i])
-            fits.writeto(edir / name, lum.astype(np.float32), hdr, overwrite=True)
-            out.append({"block": j, "frame": int(i), "tau_s": float(ph["tau_mid"][i]), "file": f"epochs/{name}",
-                        "photo": str(ph["file"][i])})
+    for j, (lum, _, _) in load_photos(paths, pcfg):
+        i = idx[j]
+        shape = lum.shape
+        name = f"epoch_{i:05d}.fits"
+        hdr = fits.Header()
+        hdr["PHOTO"] = (int(i), "numer zdjecia w sesji")
+        hdr["TAU_S"] = (float(ph["tau_mid"][i]), "srodek naswietlania od otwarcia 1. zdjecia [s]")
+        hdr["EXPTIME"] = float(ph["exposure_s"][i])
+        fits.writeto(edir / name, lum.astype(np.float32), hdr, overwrite=True)
+        out.append({"block": j, "frame": int(i), "tau_s": float(ph["tau_mid"][i]), "file": f"epochs/{name}",
+                    "photo": str(ph["file"][i])})
     ctx.write_json("epochs.json", out)
     ctx.write_json("frames.json", {"shape": list(shape), "bin": 3})
     ctx.log.info("[%s] %d zdjęć do plate solve, obraz %d×%d (superpiksele 3×3)", folder.name, len(out),
@@ -343,37 +352,36 @@ def process(ctx: StageContext) -> dict:
     todo = list(range(start, len(ph)))
     t0 = time.perf_counter()
     every = int(pcfg["checkpoint_every"])
-    with tempfile.TemporaryDirectory() as tmp:
-        for j, local in prefetch([by_name[ph["file"][i]] for i in todo], int(pcfg["workers"]), Path(tmp)):
-            i = todo[j]
-            lum, rgb, sat = decode(local, pcfg)
-            if cache is not None:
-                np.save(cache / f"lum_{i:05d}.npy", lum.astype(np.float16))
-            sig = robust_sigma(lum)
-            c = str(ph["ev"][i])
-            row = {"photo": i, "file": ph["file"][i], "ev": c, "tau_mid": float(ph["tau_mid"][i]),
-                   "bg_median": float(np.median(lum[::7, ::7])), "noise_mad": sig, "n_saturated": int(sat.sum())}
-            if c in acc:
-                px, py = camera.pixel(ra_g, dec_g, float(ph["tau_mid"][i]))
-                xmap = upsample_map(np.asarray(px, float).reshape(gx.shape), (h, w))
-                ymap = upsample_map(np.asarray(py, float).reshape(gx.shape), (h, w))
-                row["shift_px"] = float(np.hypot(xmap[h // 2, w // 2] - w // 2, ymap[h // 2, w // 2] - h // 2))
-                aligned = warp_to_reference(lum, xmap, ymap)
-                rgb_al = (np.stack([warp_to_reference(rgb[..., k], xmap, ymap) for k in range(3)], axis=-1)
-                          if acc[c].rgb is not None else None)
-                ok = acc[c].add(aligned, sig, rgb_al)
-                row["rejected_frac"] = float(1 - ok.mean())
-            stats.append(row)
-            done = j + 1
-            if done % every == 0 and done < len(todo):
-                state = {"n_photos": np.array(len(ph)), "reference": np.array(wcsinfo["reference"]),
-                         "next": np.array(i + 1)}
-                for cc in classes:
-                    state.update({f"{cc}_{k}": v for k, v in acc[cc].state().items()})
-                np.savez(ckpt, **state)
-                pd.DataFrame(stats).to_csv(ctx.outdir / "frame_stats_part.csv", index=False)
-                ctx.log.info("[%s] stos: %d/%d zdjęć, %.1f zdj./s", ctx.input_path.name, i + 1, len(ph),
-                             done / (time.perf_counter() - t0))
+    caches = [cache / f"lum_{i:05d}.npy" for i in todo] if cache is not None else None
+    ctx.log.info("[%s] dekodowanie RAF w %d procesach", ctx.input_path.name, decode_workers(pcfg))
+    for j, (lum, rgb, sat) in load_photos([by_name[ph["file"][i]] for i in todo], pcfg, caches):
+        i = todo[j]
+        rgb = rgb.astype(np.float32)
+        sig = robust_sigma(lum)
+        c = str(ph["ev"][i])
+        row = {"photo": i, "file": ph["file"][i], "ev": c, "tau_mid": float(ph["tau_mid"][i]),
+               "bg_median": float(np.median(lum[::7, ::7])), "noise_mad": sig, "n_saturated": int(sat.sum())}
+        if c in acc:
+            px, py = camera.pixel(ra_g, dec_g, float(ph["tau_mid"][i]))
+            xmap = upsample_map(np.asarray(px, float).reshape(gx.shape), (h, w))
+            ymap = upsample_map(np.asarray(py, float).reshape(gx.shape), (h, w))
+            row["shift_px"] = float(np.hypot(xmap[h // 2, w // 2] - w // 2, ymap[h // 2, w // 2] - h // 2))
+            aligned = warp_to_reference(lum, xmap, ymap)
+            rgb_al = (np.stack([warp_to_reference(rgb[..., k], xmap, ymap) for k in range(3)], axis=-1)
+                      if acc[c].rgb is not None else None)
+            ok = acc[c].add(aligned, sig, rgb_al)
+            row["rejected_frac"] = float(1 - ok.mean())
+        stats.append(row)
+        done = j + 1
+        if done % every == 0 and done < len(todo):
+            state = {"n_photos": np.array(len(ph)), "reference": np.array(wcsinfo["reference"]),
+                     "next": np.array(i + 1)}
+            for cc in classes:
+                state.update({f"{cc}_{k}": v for k, v in acc[cc].state().items()})
+            np.savez(ckpt, **state)
+            pd.DataFrame(stats).to_csv(ctx.outdir / "frame_stats_part.csv", index=False)
+            ctx.log.info("[%s] stos: %d/%d zdjęć, %.1f zdj./s", ctx.input_path.name, i + 1, len(ph),
+                         done / (time.perf_counter() - t0))
     outputs = []
     info = {"reference_photo": int(ref_epoch["frame"]), "reference_tau_s": tau_ref, "shape": [h, w],
             "cache_dir": str(cache) if cache else None, "classes": {}}
