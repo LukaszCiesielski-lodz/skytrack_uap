@@ -1,5 +1,13 @@
 # CHANGELOG
 
+## Sesje zdjęć RAW — F2: kreski, łańcuchy, czas z satelitów, NORAD — 2026-10-03
+
+- **`streaks`:** każde zdjęcie w układzie stosu (piksel = stały kierunek na niebie) minus mediana 2 + 2 sąsiednich zdjęć tej samej klasy jasności. Na GPU: maska jasnych gwiazd, filtr górnoprzepustowy, bank 16 filtrów odcinkowych (S/N kalibrowane empirycznie). Dalej: składowe wydłużone (PCA), sklejanie współliniowych kawałków (przerywana kreska = samolot), końce z dopasowania profilu „prostokąt ⊗ PSF” z niepewnością, flaga końca obciętego brzegiem lub maską. Wyjście: `streaks.parquet`, `streak_profiles.parquet` (profil jasności wzdłuż kreski do F3).
+- **`link`:** łańcuchy kresek jednego obiektu przez kolejne zdjęcia z ruchem x(t), y(t); kierunek lotu wynika z kolejności. Przerwa g między zdjęciami serii mierzona z samej geometrii łańcuchów (χ²(g), σ z krzywizny) i używana do czasu kresek, gdy σ ≤ 10 ms.
+- **`identify` dla zdjęć:** czas każdego końca = otwarcie + m·g + odczyt migawki·wiersz/H (+ czas naświetlania). Synchronizacja zegara Δ z łańcuchów i NORAD (wspólny rdzeń z wideo). Pojedyncze kreski są sprawdzane w obu kierunkach lotu. Kontrola modelu czasu z zidentyfikowanych satelitów daje poprawkę odczytu migawki i przerwy g.
+- `tle` wspólny z wideo; `adsb` z kierunków w chwilach punktów; raport: tory na mapie (zielone satelity, czerwone niezidentyfikowane, pomarańczowe samoloty), strona czasu, tabela obiektów, strona obiektu z wycinkami kolejnych zdjęć z cache; `iod.txt` z końców kresek (bez kresek o nieznanym kierunku).
+- Config: sekcja `streaks` (`detect`, `link`); czas odczytu migawki elektronicznej w `streaks.link.rolling_shutter_s` (zmiana nie przelicza stosu).
+
 ## Sesje zdjęć RAW — F1: wejście, czas, astrometria, głęboki stos — 2026-10-02
 
 - **Po pierwszych sesjach (s1 Kasjopeja, s2 Deneb, 3.10):** dekodowanie RAF w procesach (kompresja bezstratna: ~3 s/zdjęcie w jednym wątku); wyrównanie stosu z WSZYSTKICH rozwiązanych epok (interpolacja w czasie) — w s2 statyw „siadł” o ~2,6 px w 20 min; wykres ruchu aparatu w raporcie; cache luminancji bez przepełnienia float16. `process` rev 2.

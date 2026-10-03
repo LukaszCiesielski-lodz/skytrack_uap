@@ -343,8 +343,9 @@ photo:
   # czas EXIF co 1 s (bez SubSec), każde zdjęcie ma własny czas, numer w serii w MakerNote,
   # 14 bit także przy migawce elektronicznej.
   frames_per_set: 3          # bez numeru w serii (MakerNote) grupujemy co tyle zdjęć
-  inter_frame_gap_s: 0.10    # przerwa między zdjęciami serii (odczyt matrycy); zmierzymy z satelitów (F2)
-  rolling_shutter_s: 0.0     # czas odczytu migawki elektronicznej; zmierzymy z satelitów (F2)
+  inter_frame_gap_s: 0.10    # przerwa między zdjęciami serii — wartość a priori (nie zmieniać: przelicza wszystko);
+                             # właściwą mierzy etap link z łańcuchów kresek
+  rolling_shutter_s: 0.0     # nieużywane — patrz streaks.link.rolling_shutter_s
   sat_frac: 0.98             # piksel ≥ tyle × biel = nasycony (cały superpiksel 3×3 oznaczony)
   epoch_every_s: 60          # co ile sekund zdjęcie ev0 do plate solve (min. 3 epoki)
   min_epochs: 3
@@ -365,6 +366,43 @@ photo_overrides:
     retry_downsample: 2
   color:
     transfer: linear         # RAW jest liniowy
+
+# Kreski na zdjęciach RAW (F2): satelity, samoloty, meteory. Współrzędne w układzie stosu
+# (superpiksele 3×3, ~49″/px): satelita LEO ~0,7°/s = ~50 px na sekundę naświetlania.
+streaks:
+  detect:
+    neighbors: 2             # różnica: zdjęcie − mediana po tyle zdjęć tej samej klasy przed i po
+    line_len_px: 11          # długość filtrów odcinkowych
+    n_angles: 16
+    highpass_px: 31          # odjęcie średniej w oknie tyle × tyle px (zmiany tła między zdjęciami)
+    det_sigma: 5.5           # próg odpowiedzi filtra (σ) — ziarno wykrycia…
+    grow_sigma: 3.0          # …i rozrost obszaru kreski
+    min_pix: 12
+    min_elong: 3.0           # stosunek osi obszaru (punkty/gwiazdy dają okrągłe plamy)
+    min_len_px: 6            # długość kreski po doprecyzowaniu
+    min_snr: 7.0             # S/N całej kreski po dopasowaniu profilu
+    max_per_photo: 30
+    star_mask_snr: 6.0       # maska gwiazd: stos (bez tła) > tyle × σ różnicy…
+    star_mask_grow_px: 1     # …poszerzona o tyle px
+    merge_angle_deg: 3.0     # sklejanie współliniowych kawałków jednego zdjęcia
+    merge_perp_px: 2.0
+    merge_gap_px: 150
+    dash_min_pieces: 3       # przerywana (samolot): ≥ tyle kawałków o równych odstępach
+    dash_max_cv: 0.35
+    profile_half_px: 2       # profil wzdłuż kreski: suma w pasie ± tyle px
+    profile_pad_px: 8
+    edge_px: 3               # koniec bliżej brzegu/maski niż tyle px = obcięty (bez czasu)
+  link:
+    max_gap_s: 6.0           # najdłuższa przerwa między kolejnymi kreskami łańcucha
+    pos_tol_px: 3.0          # zgodność końca z ruchem łańcucha: tyle px…
+    timing_tol_s: 0.15       # …+ tyle sekund ruchu (nieznane g i odczyt migawki)
+    perp_tol_px: 3.0         # odległość obciętego końca od toru
+    speed_tol: 0.3           # pierwsza para: zgodność prędkości (długość / czas naświetlania)
+    min_chain_timing: 3      # łańcuchy ≥ tylu kresek mierzą przerwę g
+    endpoint_err_floor_px: 0.15
+    max_gap_fit_s: 0.5
+    gap_max_sigma_s: 0.01    # zmierzone g używane do czasu, gdy σ ≤ tyle
+    rolling_shutter_s: 0.0   # czas odczytu migawki elektronicznej (góra → dół kadru); kontrola z satelitów w identify
 
 # Nadpisania per plik (klucz = nazwa pliku); nakładane na całą konfigurację. Miejsce obserwacji
 # i role nowych nagrań wpisuje się w notebooku (MyDrive/skyhunt/sites.yaml), nie tutaj.

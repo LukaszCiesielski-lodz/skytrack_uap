@@ -79,7 +79,8 @@ Podpowiedzi (hipotezy, zawsze z liczbami):
 
 Zamiast wideo można przetwarzać serie zdjęć RAW (Fujifilm RAF) z bracketingiem AE: **jeden podfolder w `raw/` = jedna sesja** (np. `raw/deneb_0210/`), wyniki w `out/<folder>/`. Dark: folder z „dark” w nazwie. Miejsce obserwacji i gwiazdę-podpowiedź wpisuje się w komórce „Nagrania” pod nazwą folderu.
 - **Gotowe (F1):** EXIF i numer w serii (MakerNote Fuji), rytm interwałometru z pełnych sekund EXIF, plate solve, głęboki stos każdej klasy jasności (0, +1, −1 EV) wyrównany do obrotu nieba, raport z mapą i przebiegiem sesji.
-- **W kolejnych etapach:** satelity jako kreski z dokładnym czasem i NORAD (F2), jasność i błyski wzdłuż kreski, kolor (F3), planetoidy na stosie (F4).
+- **Gotowe (F2, do sprawdzenia na sesjach):** kreski na różnicy zdjęcia z sąsiednimi zdjęciami tej samej klasy jasności (`streaks`), łańcuchy kresek jednego obiektu przez kolejne zdjęcia i pomiar przerwy między zdjęciami serii z samej geometrii (`link`), poprawka zegara Δ z satelitów i NORAD (`identify`), samoloty z ADS-B, w raporcie tory na mapie, strona czasu, tabela obiektów i strona każdego obiektu z wycinkami kolejnych zdjęć, pozycje IOD z czasem końców kresek.
+- **W kolejnych etapach:** jasność i błyski wzdłuż kreski, kolor (F3), planetoidy na stosie (F4).
 - **Ustawienia aparatu (X-E3):** M, f/1.0, ISO 800, migawka elektroniczna, tylko RAW (kompresja bezstratna), DR100, WB 5600 K, AE BKT ±1 EV (1/2 s, 1 s, 1/4 s), redukcja szumów długich czasów wyłączona, interwałometr.
 - Diagnostyka plików przed pierwszą sesją: [colab/raw_diagnostics.ipynb](colab/raw_diagnostics.ipynb).
 

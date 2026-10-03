@@ -1,6 +1,7 @@
-"""Raport sesji zdjęć RAW (F1): mapa nieba na głębokim stosie z konstelacjami, przebieg sesji
-(rytm serii, tło, szum, dryf nieba, odrzucone piksele) i podgląd koloru ze stosu RGB.
-Kreski satelitów, NORAD i fotometria dochodzą w F2–F3."""
+"""Raport sesji zdjęć RAW: mapa nieba na głębokim stosie z konstelacjami i kreskami obiektów,
+kształt gwiazd w rogach, przebieg sesji (rytm serii, tło, szum, ruch statywu), podgląd koloru,
+czas z satelitów (Δ, przerwa w serii, odczyt migawki), tabela obiektów i strona na obiekt.
+Fotometria i błyski dochodzą w F3."""
 from __future__ import annotations
 
 from datetime import datetime, timedelta
@@ -80,8 +81,11 @@ def build(outdir: Path, folder: Path, cfg: dict) -> list[str]:
         flat = flatten(img)
         st = sky_stretch(flat)
         draw_sky(ax, st, wcs, (0, st.shape[1], 0, st.shape[0]), rcfg, always, max_px=2100)
+        objs = objects(outdir, wcs)
+        draw_objects(ax, objs, labels=True)
         fig.text(0.02, 0.03, "stos wyrównany do obrotu nieba i ruchu statywu, bez kresek (odrzucone jasne piksele "
-                             "przejściowe); tło wielkoskalowe (winietowanie, łuna) odjęte; niebieskie linie: konstelacje",
+                             "przejściowe); tło wielkoskalowe (winietowanie, łuna) odjęte; niebieskie linie: konstelacje; kreski: "
+                             "zielone — satelity (NORAD), czerwone — niezidentyfikowane, pomarańczowe — samoloty (ADS-B)",
                  fontsize=8)
         pdf.savefig(fig)
 
@@ -115,7 +119,8 @@ def build(outdir: Path, folder: Path, cfg: dict) -> list[str]:
             f"Rytm serii: P = {cad['period']:.4f} s, start serii 0 ±{cad['t0_halfwidth']:.3f} s "
             f"({'regularny' if cad['regular'] else 'NIEREGULARNY'}; EXIF {'z' if sess['exif_subsec'] else 'bez'} "
             f"ułamków sekundy)",
-            "Właściwy czas (poprawka zegara Δ z satelitów) — w F2.",
+            *(time_lines(read_json(outdir / "time_sync.json"))[:2] if (outdir / "time_sync.json").exists()
+              else ["Właściwy czas (poprawka zegara Δ z satelitów): brak etapu identify"]),
             "",
             f"Astrometria: {wcsinfo.get('n_solved', 0)}/{wcsinfo.get('n_epochs', 0)} zdjęć rozwiązanych, "
             f"zgodność {wcsinfo.get('epoch_rms_px', float('nan')):.2f} px (superpiksele)",
@@ -158,4 +163,222 @@ def build(outdir: Path, folder: Path, cfg: dict) -> list[str]:
             ax.set_xticks([])
             ax.set_yticks([])
             pdf.savefig(fig)
+        if objs:
+            satellite_pages(pdf, Figure, outdir, objs, flat, wcs, cfg, proc)
     return ["report/summary.pdf"]
+
+
+# ---------------------------------------------------------------- obiekty (F2)
+
+C_AIR = "#ff9f1a"
+
+
+def objects(outdir: Path, wcs) -> list[dict]:
+    """Obiekty z etapu identify (+ ADS-B): kreski w układzie stosu, predykcja z TLE, etykieta."""
+    import pandas as pd
+
+    from .report import C_SAT, C_UNID
+    from .sky import _world2pix
+
+    f = outdir / "tracks_final.parquet"
+    if not f.exists():
+        return []
+    final = pd.read_parquet(f)
+    if not len(final):
+        return []
+    st = pd.read_parquet(outdir / "streaks.parquet").set_index("streak_id")
+    chn = pd.read_parquet(outdir / "chains.parquet")
+    ids = read_json(outdir / "identifications.json") if (outdir / "identifications.json").exists() else {}
+    air_f = outdir / "adsb_matches.csv"
+    air = pd.read_csv(air_f) if air_f.exists() else pd.DataFrame(columns=["track_id"])
+    air_by = {int(r["track_id"]): r for _, r in air.iterrows()}
+    out = []
+    for _, t in final.sort_values("tau0").iterrows():
+        tid = int(t["track_id"])
+        sids = chn.loc[chn["chain_id"] == tid - 1].sort_values("pos")["streak_id"].astype(int).tolist()
+        segs = st.loc[sids].reset_index()
+        a = air_by.get(tid)
+        kind = "air" if (a is not None and t["kind"] != "sat") else str(t["kind"])
+        pred = None
+        best = (ids.get(str(tid)) or [{}])[0]
+        if t["kind"] == "sat" and best.get("pred_radec"):
+            pr = np.asarray(best["pred_radec"], float)
+            px, py = _world2pix(wcs, pr[:, 0], pr[:, 1])
+            pred = np.column_stack([px, py])
+        if kind == "sat":
+            label = f"#{tid} {t['sat_name']}"
+        elif kind == "air":
+            reg = a.get("reg")
+            label = f"#{tid} {reg if isinstance(reg, str) else a.get('icao')}"
+        else:
+            label = f"#{tid} {t['class_hint']}"
+        out.append({"track_id": tid, "row": t, "segs": segs, "kind": kind, "pred": pred, "label": label, "air": a,
+                    "color": {"sat": C_SAT, "air": C_AIR}.get(kind, C_UNID)})
+    return out
+
+
+def draw_objects(ax, objs: list[dict], labels: bool = True, lw: float = 1.6) -> None:
+    from .report import C_PRED
+
+    for o in objs:
+        for s in o["segs"].itertuples():
+            ax.plot([s.xa, s.xb], [s.ya, s.yb], color=o["color"], lw=lw, solid_capstyle="butt")
+        if o["pred"] is not None and len(o["pred"]) >= 2:
+            ax.plot(o["pred"][:, 0], o["pred"][:, 1], "--", color=C_PRED, lw=0.7)
+        if labels and len(o["segs"]):
+            s = o["segs"].iloc[0]
+            ax.text(s["xa"] + 8, s["ya"] - 8, o["label"], color=o["color"], fontsize=6, clip_on=True)
+
+
+def _utc(s) -> str:
+    from .report import fmt_utc
+
+    return fmt_utc(datetime.fromisoformat(str(s)), 2) if isinstance(s, str) and s else "–"
+
+
+def _f(v, spec: str, unit: str = "") -> str:
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return "–"
+    return f"{v:{spec}}{unit}" if np.isfinite(v) else "–"
+
+
+def time_lines(sync: dict) -> list[str]:
+    """Opis czasu sesji: Δ z satelitów, rytm, przerwa g, odczyt migawki, kontrola z satelitów."""
+    pt = sync.get("photo_timing") or {}
+    gap, chk, cad = pt.get("gap") or {}, pt.get("satellite_check") or {}, pt.get("cadence") or {}
+    lines = []
+    if sync.get("synced"):
+        lines.append(f"Poprawka zegara Δ = {sync['delta_s']:+.3f} ± {sync['sigma_s']:.3f} s   pewność: "
+                     f"{sync['confidence']}   metoda: {sync['method']}")
+    else:
+        lines.append("Czas NIEZSYNCHRONIZOWANY z satelitami — czas z EXIF (±0,5 s) i zegara aparatu")
+    lines.append(f"Start sesji: EXIF {_utc(sync.get('start_utc_prior'))} → po synchronizacji "
+                 f"{_utc(sync.get('start_utc_synced'))}")
+    ref = sync.get("reference")
+    if ref:
+        lines.append(f"Satelita odniesienia: NORAD {ref['norad']} {ref['name']} (δ = {ref['delta_s']:+.3f} s, "
+                     f"residuum {ref['rms_deg'] * 3600:.0f}″)")
+    if cad:
+        lines.append(f"Rytm serii z EXIF: P = {_f(cad.get('period'), '.4f', ' s')} (faza w obrębie sekundy → Δ)")
+    if gap.get("fitted"):
+        lines.append(f"Przerwa między zdjęciami serii (geometria {gap['n_chains']} łańcuchów): g = {gap['g_s']:.3f} ± "
+                     f"{gap['sigma_s']:.3f} s; residua końców {_f(gap.get('rms_px'), '.2f', ' px')} = "
+                     f"{_f(gap.get('rms_ms'), '.1f', ' ms')}; "
+                     + ("użyta do czasu kresek" if pt.get("gap_from_geometry") else "NIEużyta (za duża niepewność)"))
+    else:
+        lines.append(f"Przerwa między zdjęciami serii: bez pomiaru ({gap.get('note', 'za mało łańcuchów')}), "
+                     f"przyjęto {_f(pt.get('gap_used_s'), '.3f', ' s')}")
+    lines.append(f"Odczyt migawki elektronicznej przyjęty: {_f(pt.get('rolling_shutter_s'), '.3f', ' s')} "
+                 f"(streaks.link.rolling_shutter_s)")
+    if chk.get("n_tracks"):
+        lines.append(f"Kontrola z satelitów ({chk['n_tracks']} torów): residua czasu końców "
+                     f"{_f(chk.get('rms_ms'), '.1f', ' ms')}; poprawka odczytu migawki "
+                     f"{_f(chk.get('rolling_corr_s'), '+.3f')} ± {_f(chk.get('rolling_sigma_s'), '.3f', ' s')}; "
+                     f"poprawka g {_f(chk.get('gap_corr_s'), '+.3f')} ± {_f(chk.get('gap_sigma_s'), '.3f', ' s')}")
+    off = sync.get("observer_offset")
+    if off:
+        lines.append(f"Paralaksa satelitów: obserwator przesunięty o {off['north_km']:.2f} km N, "
+                     f"{off['east_km']:.2f} km E ({off['n_tracks']} torów)")
+    lines.append(f"Elementy orbit: {sync.get('catalog_note', '–')}")
+    return lines
+
+
+def _sunlit_text(v) -> str:
+    if v is None or (isinstance(v, float) and not np.isfinite(v)):
+        return "oświetlenie ?"
+    return "oświetlony" if bool(v) else "w cieniu Ziemi"
+
+
+def satellite_pages(pdf, Figure, outdir: Path, objs: list[dict], flat: np.ndarray, wcs, cfg: dict,
+                    proc: dict) -> None:
+    """Strony F2: czas z satelitów, tabela obiektów, strona na obiekt (tor na stosie + wycinki
+    z kolejnych zdjęć w ich własnych pikselach, z cache etapu process)."""
+    from .report import _region, _table_pages, sky_stretch
+
+    sync = read_json(outdir / "time_sync.json")
+    fig = Figure(figsize=A4)
+    fig.suptitle("Czas z satelitów i model czasu zdjęć", x=0.02, ha="left", fontsize=13)
+    lines = time_lines(sync)
+    members = sync.get("members") or []
+    if members:
+        lines += ["", "Satelity potwierdzające Δ:"] + [
+            f"  NORAD {m['norad']:>6} {str(m['name'])[:28]:<28} δ = {m['delta_s']:+.3f} s  "
+            f"residuum {m['rms_deg'] * 3600:5.0f}″  prędkość ×{m['speed_ratio']:.3f}" for m in members[:20]]
+    fig.text(0.02, 0.92, "\n".join(lines), family="monospace", fontsize=7.5, va="top")
+    pdf.savefig(fig)
+
+    rows = []
+    for o in objs:
+        t, a = o["row"], o["air"]
+        if o["kind"] == "sat":
+            who, name, why = f"{int(t['norad'])}", str(t["sat_name"]), str(t["match_reason"])
+        elif o["kind"] == "air":
+            who = str(a.get("callsign") if isinstance(a.get("callsign"), str) else a.get("icao"))
+            typ = a.get("type") if isinstance(a.get("type"), str) else ""
+            name, why = f"{typ} {_f(a.get('alt_m'), '.0f', ' m')}", str(t["class_reason"])
+        else:
+            who, name, why = "–", "", str(t["class_reason"])
+        rows.append([f"#{o['track_id']}", {"sat": "satelita", "air": "samolot (ADS-B)"}.get(o["kind"], t["class_hint"]),
+                     who, name[:26], _utc(t["utc_start"]), _utc(t["utc_end"]), int(t["n_streaks"]),
+                     _f(t["omega_deg_s"], ".2f"), str(t["confidence"] or "–"), why[:70]])
+    _table_pages(pdf, Figure, "Obiekty — kreski na zdjęciach",
+                 ["#", "klasa", "NORAD / lot", "nazwa", "UTC początek", "UTC koniec", "kresek", "°/s", "pewność",
+                  "uzasadnienie"], rows)
+
+    cache = Path(proc["cache_dir"]) if proc.get("cache_dir") else None
+    st_full = sky_stretch(flat)
+    for o in objs[: int(cfg["report"].get("photo_object_pages", 60))]:
+        t = o["row"]
+        fig = Figure(figsize=A4)
+        fig.suptitle(f"#{o['track_id']} — " + o["label"].split(" ", 1)[-1], x=0.02, ha="left", fontsize=12)
+        info = [f"UTC {_utc(t['utc_start'])} → {_utc(t['utc_end'])}   ({t['dur_s']:.1f} s, {int(t['n_streaks'])} kresek, "
+                f"{t['omega_deg_s']:.2f}°/s)",
+                f"Az/Alt {t['az0']:.1f}°/{t['alt0']:.1f}° → {t['az1']:.1f}°/{t['alt1']:.1f}°   RA/Dec {t['ra0']:.3f} "
+                f"{t['dec0']:+.3f} → {t['ra1']:.3f} {t['dec1']:+.3f}",
+                f"S/N kresek (mediana) {_f(t['peak_snr_median'], '.0f')}   {t['class_reason']}"]
+        if o["kind"] == "sat":
+            info.append(f"NORAD {int(t['norad'])} {t['sat_name']}: {t['match_reason']} (pewność {t['confidence']}, "
+                        f"{_sunlit_text(t['sunlit'])})")
+        if bool(t.get("dir_ambiguous", False)):
+            info.append("Kierunek lotu nieznany (jedna kreska) — czasy końców mogą być zamienione")
+        fig.text(0.02, 0.93, "\n".join(info), fontsize=7.5, va="top")
+        segs = o["segs"]
+        xy = np.vstack([segs[["xa", "ya"]].to_numpy(), segs[["xb", "yb"]].to_numpy()])
+        ax = fig.add_axes([0.02, 0.05, 0.5, 0.72])
+        x0, x1, y0, y1 = _region(xy, flat.shape, 40, 0.5 / 0.72 * A4[0] / A4[1])
+        ax.imshow(st_full[y0:y1, x0:x1], cmap="gray", vmin=0, vmax=1, interpolation="nearest",
+                  extent=(x0 - 0.5, x1 - 0.5, y1 - 0.5, y0 - 0.5))
+        draw_objects(ax, [o], labels=False, lw=1.0)
+        ax.plot(segs["xa"].iloc[0], segs["ya"].iloc[0], "o", color=o["color"], ms=3)
+        ax.set_xlim(x0, x1)
+        ax.set_ylim(y1, y0)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.set_title("tor na stosie (układ nieba); przerywana: predykcja z elementów orbit", fontsize=7)
+        pick = segs.iloc[np.unique(np.linspace(0, len(segs) - 1, min(len(segs), 6)).astype(int))]
+        for k, (_, s) in enumerate(pick.iterrows()):
+            f = cache / f"lum_{int(s['photo']):05d}.npy" if cache else None
+            a = fig.add_axes([0.55 + (k % 2) * 0.22, 0.55 - (k // 2) * 0.25, 0.2, 0.2])
+            a.set_xticks([])
+            a.set_yticks([])
+            a.set_title(f"{s['file']} ({s['ev']}, {s['exposure_s']:g} s)", fontsize=6)
+            if f is None or not f.exists():
+                a.text(0.5, 0.5, "brak cache\nzdjęcia", ha="center", va="center", fontsize=6, transform=a.transAxes)
+                continue
+            img = np.load(f).astype(np.float32)
+            xs, ys = [s["xa_p"], s["xb_p"]], [s["ya_p"], s["yb_p"]]
+            half = max(abs(xs[1] - xs[0]), abs(ys[1] - ys[0])) / 2 + 12
+            cx, cy = float(np.mean(xs)), float(np.mean(ys))
+            bx0, bx1 = int(max(cx - half, 0)), int(min(cx + half, img.shape[1]))
+            by0, by1 = int(max(cy - half, 0)), int(min(cy + half, img.shape[0]))
+            cut = img[by0:by1, bx0:bx1]
+            if cut.size == 0:
+                continue
+            a.imshow(sky_stretch(cut), cmap="gray", vmin=0, vmax=1, interpolation="nearest",
+                     extent=(bx0 - 0.5, bx1 - 0.5, by1 - 0.5, by0 - 0.5))
+            a.plot(xs, ys, color=o["color"], lw=0.6, alpha=0.5)
+            a.set_xlim(bx0, bx1)
+            a.set_ylim(by1, by0)
+        pdf.savefig(fig)

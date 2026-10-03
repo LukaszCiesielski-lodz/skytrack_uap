@@ -257,6 +257,15 @@ class FixedCamera:
         c = SkyCoord(az=aa.az, alt=aa.alt, frame=self._altaz(tau)).transform_to(ICRS())
         return c.ra.deg, c.dec.deg
 
+    def radec_altaz(self, ra, dec, tau) -> tuple[np.ndarray, np.ndarray]:
+        """(Az, Alt) [°] kierunku ICRS w chwili ``tau`` — geometryczne, bez refrakcji."""
+        import astropy.units as u
+        from astropy.coordinates import ICRS, SkyCoord
+
+        ra, dec, tau = np.broadcast_arrays(np.asarray(ra, float), np.asarray(dec, float), np.asarray(tau, float))
+        aa = SkyCoord(ra=ra * u.deg, dec=dec * u.deg, frame=ICRS()).transform_to(self._altaz(tau))
+        return aa.az.deg, aa.alt.deg
+
     def pixel(self, ra, dec, tau) -> tuple[np.ndarray, np.ndarray]:
         """Odwrotność ``icrs``: (RA, Dec) w chwili ``tau`` → piksel."""
         import astropy.units as u

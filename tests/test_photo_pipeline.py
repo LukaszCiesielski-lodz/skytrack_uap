@@ -47,8 +47,11 @@ def test_photo_registry_separate_from_video():
     from skyhunt import photo_stages  # noqa: F401
     from skyhunt.pipeline import PHOTO_PIPELINE, PIPELINE, pipeline_for
 
-    assert list(PHOTO_PIPELINE.stages) == ["probe", "frames", "astrometry", "process", "report"]
-    assert "frames" not in PIPELINE.stages and "process" not in PIPELINE.stages
+    assert list(PHOTO_PIPELINE.stages) == ["probe", "frames", "astrometry", "process", "streaks", "link", "tle",
+                                           "identify", "adsb", "report"]
+    assert "frames" not in PIPELINE.stages and "process" not in PIPELINE.stages and "streaks" not in PIPELINE.stages
+    assert PIPELINE.stages["tle"].func is PHOTO_PIPELINE.stages["tle"].func      # wspólny etap, osobne zależności
+    assert PIPELINE.stages["identify"].func is not PHOTO_PIPELINE.stages["identify"].func
     assert PIPELINE.stages["astrometry"].requires == ("detect",)
     assert PHOTO_PIPELINE.stages["astrometry"].requires == ("frames",)
     assert pipeline_for(__import__("pathlib").Path(__file__)) is PIPELINE

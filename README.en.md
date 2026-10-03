@@ -79,7 +79,8 @@ Hints (hypotheses, always with numbers):
 
 Instead of video you can process RAW photo series (Fujifilm RAF) with AE bracketing: **one subfolder in `raw/` = one session** (e.g. `raw/deneb_0210/`), results in `out/<folder>/`. Dark: a folder with "dark" in its name. The observing site and hint star are entered in the "Nagrania" cell under the folder name.
 - **Done (F1):** EXIF and sequence number (Fuji MakerNote), intervalometer cadence from whole-second EXIF times, plate solving, a deep stack of each exposure class (0, +1, −1 EV) aligned for sky rotation, a report with the map and the session timeline.
-- **Next stages:** satellites as streaks with precise times and NORAD IDs (F2), brightness and glints along the streak, color (F3), asteroids in the stack (F4).
+- **Done (F2, being verified on sessions):** streaks on the difference between a photo and neighbouring photos of the same exposure class (`streaks`), chains of streaks of one object across consecutive photos and the gap between photos of a set measured from geometry alone (`link`), clock correction Δ from satellites and NORAD IDs (`identify`), aircraft from ADS-B; the report shows tracks on the map, a timing page, an object table and a page per object with cut-outs from consecutive photos; IOD positions use streak end times.
+- **Next stages:** brightness and glints along the streak, color (F3), asteroids in the stack (F4).
 - **Camera settings (X-E3):** M, f/1.0, ISO 800, electronic shutter, RAW only (lossless compressed), DR100, WB 5600 K, AE BKT ±1 EV (1/2 s, 1 s, 1/4 s), long-exposure NR off, intervalometer.
 - File diagnostics before the first session: [colab/raw_diagnostics.ipynb](colab/raw_diagnostics.ipynb).
 
