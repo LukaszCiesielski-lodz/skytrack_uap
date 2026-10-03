@@ -30,20 +30,31 @@ def rgb_preview(rgb: np.ndarray) -> np.ndarray:
     return np.clip(np.arcsinh(8 * x) / np.arcsinh(8), 0, 1)
 
 
+def _block_weights(n: int, nb: int, box: int) -> np.ndarray:
+    """Macierz [n, nb] interpolacji liniowej między środkami bloków (z ekstrapolacją przy brzegach)."""
+    W = np.zeros((n, nb))
+    if nb == 1:
+        W[:, 0] = 1.0
+        return W
+    u = (np.arange(n) - (box - 1) / 2) / box          # współrzędna w jednostkach bloków (0 = środek 1. bloku)
+    k = np.clip(np.floor(u).astype(int), 0, nb - 2)
+    t = u - k
+    W[np.arange(n), k] = 1 - t
+    W[np.arange(n), k + 1] = t
+    return W
+
+
 def flatten(img: np.ndarray, box: int = 48) -> np.ndarray:
     """Odjęcie tła wielkoskalowego (winietowanie f/1.0 + łuna miasta): mediana w blokach ``box``
-    px, wygładzona i powiększona do pełnego obrazu. Do pokazania gwiazd równo w całym kadrze."""
-    from scipy.ndimage import median_filter, zoom
-
+    px, interpolowana liniowo między ŚRODKAMI bloków (powiększenie „od rogu do rogu” przesuwało
+    tło o pół bloku — na stromym winietowaniu dziesiątki DN). Do pokazania gwiazd w całym kadrze."""
     a = np.nan_to_num(img, nan=float(np.nanmedian(img)))
     h, w = a.shape
+    box = max(1, min(int(box), h, w))
     hb, wb = h // box, w // box
     blocks = np.median(a[:hb * box, :wb * box].reshape(hb, box, wb, box), axis=(1, 3))
-    blocks = median_filter(blocks, size=3, mode="nearest")
-    bg = zoom(blocks, (h / hb, w / wb), order=1)[:h, :w]
-    if bg.shape != a.shape:
-        bg = np.pad(bg, ((0, h - bg.shape[0]), (0, w - bg.shape[1])), mode="edge")
-    return a - bg
+    bg = _block_weights(h, hb, box) @ blocks @ _block_weights(w, wb, box).T
+    return (a - bg).astype(np.float32)
 
 
 def build(outdir: Path, folder: Path, cfg: dict) -> list[str]:

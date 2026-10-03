@@ -129,7 +129,11 @@ def test_report_color_page(outdir, synthetic_video, cfg):
                         t2_f20=np.full((64, 64, 3), 120, np.uint8))
     build(out, synthetic_video, meta, cfg)
     r, text = _text(out / "report/objects/unid_t2.pdf")
-    assert len(r.pages) >= 3 and "Nadmiar zieleni" in text and "6700 K" in text and "dyfrakcyjnej" in text
+    from skyhunt.color import bv_to_kelvin
+
+    # tabela parametrów pokazuje T z B−V (kelvin_text), nie T_eq_K z pliku
+    assert len(r.pages) >= 3 and "Nadmiar zieleni" in text and f"{float(bv_to_kelvin(0.4)):.0f} K" in text \
+        and "dyfrakcyjnej" in text
     r, text = _text(out / "report/summary.pdf")
     assert "kalibracja na gwiazdach" in text and "Słońce odbite" in text
 
