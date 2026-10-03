@@ -88,9 +88,18 @@ def build(outdir: Path, folder: Path, cfg: dict) -> list[str]:
         ] + [f"UWAGA: {w}" for w in sess.get("warnings", [])]
         fig.text(0.02, 0.92, "\n".join(lines), family="monospace", fontsize=8, va="top")
         panels = [("bg_median", "tło (mediana) [DN·9]"), ("noise_mad", "szum σ [DN·9]"),
-                  ("shift_px", "dryf nieba względem odniesienia [px]"), ("rejected_frac", "odrzucone piksele")]
+                  ("drift", "ruch aparatu z plate solve (statyw) [px]"), ("rejected_frac", "odrzucone piksele")]
+        drift = proc.get("pointing_drift") or []
         for k, (col, label) in enumerate(panels):
             a = fig.add_axes([0.07 + (k % 2) * 0.48, 0.37 - (k // 2) * 0.3, 0.4, 0.22])
+            if col == "drift":
+                if drift:
+                    t = [d["tau_s"] for d in drift]
+                    a.plot(t, [d["dx_px"] for d in drift], "o-", ms=3, lw=0.8, label="x")
+                    a.plot(t, [d["dy_px"] for d in drift], "s-", ms=3, lw=0.8, label="y")
+                    a.axhline(0, color="k", lw=0.5)
+                    a.legend(fontsize=6)
+                    label += f" — max {proc.get('pointing_drift_max_px', 0):.2f} px, uwzględniony w stosie"
             for c, g in stats.groupby("ev"):
                 if col in g:
                     a.plot(g["tau_mid"], g[col], ".", ms=2, color=C_EV.get(c, "k"), label=c)

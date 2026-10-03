@@ -130,7 +130,7 @@ def _load_one(path: str, sat_frac: float, cache: str | None):
 
     lum, rgb, sat = superpixels(read_raw(Path(path)), sat_frac=sat_frac)
     if cache:
-        np.save(cache, lum.astype(np.float16))
+        np.save(cache, np.clip(lum, -65000, 65000).astype(np.float16))   # prześwietlone > zakres float16
     return lum, rgb.astype(np.float16), sat
 
 
@@ -259,6 +259,44 @@ def warp_to_reference(img: np.ndarray, xmap: np.ndarray, ymap: np.ndarray, order
     return map_coordinates(img, [ymap, xmap], order=order, mode="constant", cval=np.nan).astype(np.float32)
 
 
+class PointingModel:
+    """Piksel odniesienia → piksel zdjęcia w chwili τ z kamer WSZYSTKICH rozwiązanych epok:
+    każda epoka ma własny WCS (dokładny w swojej chwili), między sąsiednimi epokami interpolacja
+    liniowa w czasie. Tak powolny ruch statywu (głowica „siada” przy aparacie w zenicie) nie
+    rozmywa stosu; jeden WCS z początku zakładałby idealnie nieruchomy aparat."""
+
+    def __init__(self, cameras: list, taus: list[float], ra: np.ndarray, dec: np.ndarray):
+        order = np.argsort(taus)
+        self.cams = [cameras[i] for i in order]
+        self.taus = np.asarray(taus, float)[order]
+        self.ra, self.dec = ra, dec
+
+    def coarse(self, tau: float) -> tuple[np.ndarray, np.ndarray]:
+        n = len(self.cams)
+        if n == 1:
+            x, y = self.cams[0].pixel(self.ra, self.dec, tau)
+            return np.asarray(x, float), np.asarray(y, float)
+        lo = int(np.clip(np.searchsorted(self.taus, tau) - 1, 0, n - 2))
+        hi = lo + 1
+        w = float(np.clip((tau - self.taus[lo]) / max(self.taus[hi] - self.taus[lo], 1e-9), 0.0, 1.0))
+        x0, y0 = self.cams[lo].pixel(self.ra, self.dec, tau)
+        x1, y1 = self.cams[hi].pixel(self.ra, self.dec, tau)
+        return ((1 - w) * np.asarray(x0, float) + w * np.asarray(x1, float),
+                (1 - w) * np.asarray(y0, float) + w * np.asarray(y1, float))
+
+
+def pointing_drift(ref_camera, cameras: list, taus: list[float], ra: float, dec: float) -> list[dict]:
+    """Ruch aparatu: gdzie kierunek środka kadru widzi kamera każdej epoki, a gdzie przewiduje
+    go kamera odniesienia (nieruchomy aparat) — różnica w pikselach."""
+    out = []
+    for cam, tau in sorted(zip(cameras, taus), key=lambda p: p[1]):
+        xr, yr = ref_camera.pixel(ra, dec, tau)
+        xk, yk = cam.pixel(ra, dec, tau)
+        out.append({"tau_s": float(tau), "dx_px": float(np.ravel(xk)[0] - np.ravel(xr)[0]),
+                    "dy_px": float(np.ravel(yk)[0] - np.ravel(yr)[0])})
+    return out
+
+
 class StackAccumulator:
     """Średnia per piksel z odrzucaniem przejściowych jasnych pikseli (kreski satelitów,
     samoloty): po ``warmup`` zdjęciach próbka > średnia + k·σ zdjęcia nie wchodzi."""
@@ -303,7 +341,7 @@ class StackAccumulator:
             self.rgb = d[f"{prefix}rgb"]
 
 
-@PHOTO_PIPELINE.stage("process", sections=("photo", "site"), requires=("astrometry",), rev=1, roles=("sky",))
+@PHOTO_PIPELINE.stage("process", sections=("photo", "site"), requires=("astrometry",), rev=2, roles=("sky",))
 def process(ctx: StageContext) -> dict:
     """Wszystkie zdjęcia: superpiksele, cache luminancji (lokalnie), statystyki, stosy per klasa
     jasności wyrównane do zdjęcia odniesienia astrometrii (model nieruchomej kamery)."""
@@ -322,9 +360,19 @@ def process(ctx: StageContext) -> dict:
     h, w = (int(v) for v in ctx.read_json("frames.json")["shape"])
     ref_epoch = next(e for e in wcsinfo["epochs"] if e["file"] == wcsinfo["reference"])
     tau_ref = float(wcsinfo["reference_tau_s"])
-    camera = FixedCamera(load_wcs(ctx.outdir / wcsinfo["reference_wcs"]), tau_ref, prior_start(ctx), *_site(ctx.cfg))
+    t_start, site = prior_start(ctx), _site(ctx.cfg)
+    camera = FixedCamera(load_wcs(ctx.outdir / wcsinfo["reference_wcs"]), tau_ref, t_start, *site)
     gx, gy = coarse_grid((h, w), tuple(pcfg["stack_grid"]))
     ra_g, dec_g = camera.icrs(gx.ravel(), gy.ravel(), tau_ref)
+    solved = [e for e in wcsinfo["epochs"] if e.get("solved")]
+    cams = [FixedCamera(load_wcs(ctx.outdir / e["wcs"]), float(e["tau_s"]), t_start, *site) for e in solved]
+    taus = [float(e["tau_s"]) for e in solved]
+    pointing = PointingModel(cams, taus, ra_g, dec_g)
+    ra_c, dec_c = camera.icrs(w / 2, h / 2, tau_ref)
+    drift = pointing_drift(camera, cams, taus, float(np.ravel(ra_c)[0]), float(np.ravel(dec_c)[0]))
+    dmax = max((float(np.hypot(d["dx_px"], d["dy_px"])) for d in drift), default=0.0)
+    (ctx.log.warning if dmax > 1.0 else ctx.log.info)(
+        "[%s] ruch aparatu względem nieruchomego modelu: do %.2f px (uwzględniony w stosie)", ctx.input_path.name, dmax)
     classes = [c for c in pcfg["stack_classes"] if c in set(ph["ev"])]
     acc = {c: StackAccumulator((h, w), float(pcfg["stack_reject_sigma"]), int(pcfg["stack_warmup"]),
                                channels=3 if c == "ev0" else 0) for c in classes}
@@ -362,7 +410,7 @@ def process(ctx: StageContext) -> dict:
         row = {"photo": i, "file": ph["file"][i], "ev": c, "tau_mid": float(ph["tau_mid"][i]),
                "bg_median": float(np.median(lum[::7, ::7])), "noise_mad": sig, "n_saturated": int(sat.sum())}
         if c in acc:
-            px, py = camera.pixel(ra_g, dec_g, float(ph["tau_mid"][i]))
+            px, py = pointing.coarse(float(ph["tau_mid"][i]))
             xmap = upsample_map(np.asarray(px, float).reshape(gx.shape), (h, w))
             ymap = upsample_map(np.asarray(py, float).reshape(gx.shape), (h, w))
             row["shift_px"] = float(np.hypot(xmap[h // 2, w // 2] - w // 2, ymap[h // 2, w // 2] - h // 2))
@@ -384,7 +432,8 @@ def process(ctx: StageContext) -> dict:
                          done / (time.perf_counter() - t0))
     outputs = []
     info = {"reference_photo": int(ref_epoch["frame"]), "reference_tau_s": tau_ref, "shape": [h, w],
-            "cache_dir": str(cache) if cache else None, "classes": {}}
+            "cache_dir": str(cache) if cache else None, "classes": {}, "pointing_drift": drift,
+            "pointing_drift_max_px": dmax}
     for c in classes:
         mean = acc[c].mean()
         hdr = fits.Header()

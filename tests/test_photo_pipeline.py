@@ -115,3 +115,23 @@ def test_probe_session_from_fake_rafs(tmp_path, cfg):
     assert ph[3]["tau_open"] == pytest.approx(s["cadence"]["period"])
     assert res["time_prior"]["start_utc"].startswith("2026-10-02T19:00:01")   # CEST → UTC
     assert not s["warnings"]
+
+
+def test_pointing_model_interpolates_camera_creep():
+    pytest.importorskip("scipy")
+    from skyhunt.photo_stages import PointingModel, pointing_drift
+
+    class Cam:                                         # kamera epoki: przesunięcie stałe + obrót nieba 0,5 px/s
+        def __init__(self, off):
+            self.off = off
+
+        def pixel(self, ra, dec, tau):
+            return np.asarray(ra, float) + 0.5 * tau + self.off, np.asarray(dec, float)
+
+    ra, dec = np.array([10.0, 20.0]), np.array([5.0, 6.0])
+    pm = PointingModel([Cam(2.0), Cam(0.0)], [10.0, 0.0], ra, dec)      # statyw „siadł” o 2 px w 10 s
+    x, y = pm.coarse(5.0)
+    assert np.allclose(x, ra + 2.5 + 1.0) and np.allclose(y, dec)
+    assert np.allclose(pm.coarse(20.0)[0], ra + 10.0 + 2.0)          # poza zakresem: ostatnia epoka
+    d = pointing_drift(Cam(0.0), [Cam(0.0), Cam(2.0)], [0.0, 10.0], 10.0, 5.0)
+    assert [round(v["dx_px"], 6) for v in d] == [0.0, 2.0]

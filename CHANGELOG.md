@@ -2,6 +2,7 @@
 
 ## Sesje zdjęć RAW — F1: wejście, czas, astrometria, głęboki stos — 2026-10-02
 
+- **Po pierwszych sesjach (s1 Kasjopeja, s2 Deneb, 3.10):** dekodowanie RAF w procesach (kompresja bezstratna: ~3 s/zdjęcie w jednym wątku); wyrównanie stosu z WSZYSTKICH rozwiązanych epok (interpolacja w czasie) — w s2 statyw „siadł” o ~2,6 px w 20 min; wykres ruchu aparatu w raporcie; cache luminancji bez przepełnienia float16. `process` rev 2.
 - **Nowe wejście:** podfolder w `raw/` z ≥ 3 plikami RAF = jedna sesja zdjęć (osobny rejestr etapów `PHOTO_PIPELINE`, wyniki w `out/<folder>/`). Etapy wideo i ich hashe bez zmian.
 - `probe`: EXIF z JPEG-a w RAF (Pillow, bez exiftool) i MakerNote Fuji (numer w serii, licznik); serie bracketingu, klasy `ev0`/`ev+1`/`ev-1`; rytm interwałometru z pełnych sekund EXIF (noniusz: T_k = T0 + P·k); chwile otwarcia migawki; czas a priori w UTC → `photos.csv`, `meta.json`.
 - `frames` → `astrometry`: zdjęcia ev0 co minutę jako FITS z superpikseli 3×3 (X-Trans: 5 G + 2 R + 2 B), plate solve wspólnym rdzeniem z wideo (`solve_epochs`).
