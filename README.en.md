@@ -83,6 +83,17 @@ Instead of video you can process RAW photo series (Fujifilm RAF) with AE bracket
 - **Next stages:** brightness and glints along the streak, color (F3), asteroids in the stack (F4).
 - **Camera settings (X-E3):** M, f/1.0, ISO 800, electronic shutter, RAW only (lossless compressed), DR100, WB 5600 K, AE BKT ±1 EV (1/2 s, 1 s, 1/4 s), long-exposure NR off, intervalometer.
 - File diagnostics before the first session: [colab/raw_diagnostics.ipynb](colab/raw_diagnostics.ipynb).
+- **Notebooks:** [colab/run_photos.ipynb](colab/run_photos.ipynb) — sessions one after another (Run all); [colab/astrophoto.ipynb](colab/astrophoto.ipynb) — astrophotograph.
+
+### Astrophotograph (`skyhunt astrophoto`)
+
+The inverse of streak hunting: one full-resolution sky image from a RAW session, `out/<session>/astro/` (JPEG, centre crop, 16-bit TIFF, linear FITS).
+- Darks: a master dark per exposure time from a folder with "dark" in its name, subtracted before demosaicing.
+- Alignment with the session's astrometric maps (sky rotation, tripod creep), two-pass sigma-clipped mean: satellites, aircraft, meteors and cosmic rays disappear.
+- HDR from bracketing: each class weighted by n·T, saturated pixels taken from shorter exposures (galaxy core).
+- Background: block medians without stars and without known large objects (M31, M33, M42, M45, NGC 7000…; placed via astrometry); the background shape is used as the f/1.0 vignetting (no flats).
+- Color: the median field-star color is set to white; colour-preserving asinh stretch, chroma denoising.
+- For a showcase image: 2–3 s per frame (50 mm on a tripod), ISO 800–1600, 300–600 frames, darks and flats.
 
 ### Asteroids, comets and NEOs
 

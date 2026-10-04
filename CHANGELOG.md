@@ -1,5 +1,25 @@
 # CHANGELOG
 
+## Zdjęcie astronomiczne z sesji RAW; poprawki F2 — 2026-10-04
+
+- **`skyhunt astrophoto <sesja>`** i notebook `colab/astrophoto.ipynb`. Kroki:
+  - darki: średnia klatka ciemna per czas naświetlania, odejmowana przed demozaikowaniem;
+  - pełne RGB z X-Trans, wyrównane mapami astrometrii sesji;
+  - średnia z odrzucaniem σ w dwóch przejściach, osobno dla każdej klasy jasności;
+  - HDR z bracketingu, ważony n·T;
+  - tło i winietowanie z mediany bloków bez gwiazd i chronionych obiektów;
+  - kolor ustawiony na gwiazdach;
+  - rozciągnięcie asinh z zachowaniem koloru.
+
+  Wynik w `out/<sesja>/astro/`.
+- **Notebook `colab/run_photos.ipynb`:** sesje zdjęć jedna po drugiej („Uruchom wszystko”) z podglądem stron raportu.
+- **Kreski (`streaks` rev 2):**
+  - S/N liczone z 12 pasów kontrolnych obok kreski. Szum po wyrównaniu jest skorelowany, a stary wzór zawyżał S/N 2–3×: w s2 było ~1700 „kresek” z samego szumu.
+  - Kreska jest odrzucana, gdy któraś tercja nie przekracza 2σ albo gdy rozmycie końców nie przypomina gwiazdy.
+  - Log pokazuje powody odrzucenia kandydatów.
+- **Łańcuchy (`link` rev 2):** sklejanie łańcuchów porwanych przez brakującą serię (przerwa do 30 s) oraz pomiar wspólnego rozrzutu startu serii.
+- **Raport (rev 3):** mapa, tabela i strony obiektów tylko dla satelitów, samolotów, meteorów i łańcuchów ≥ 3 kresek. Krótkie obiekty są na jednej stronie diagnostycznej.
+
 ## Sesje zdjęć RAW — F2: kreski, łańcuchy, czas z satelitów, NORAD — 2026-10-03
 
 - **`streaks`:** każde zdjęcie w układzie stosu (piksel = stały kierunek na niebie) minus mediana 2 + 2 sąsiednich zdjęć tej samej klasy jasności. Na GPU: maska jasnych gwiazd, filtr górnoprzepustowy, bank 16 filtrów odcinkowych (S/N kalibrowane empirycznie). Dalej: składowe wydłużone (PCA), sklejanie współliniowych kawałków (przerywana kreska = samolot), końce z dopasowania profilu „prostokąt ⊗ PSF” z niepewnością, flaga końca obciętego brzegiem lub maską. Wyjście: `streaks.parquet`, `streak_profiles.parquet` (profil jasności wzdłuż kreski do F3).

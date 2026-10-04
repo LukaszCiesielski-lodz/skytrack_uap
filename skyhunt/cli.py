@@ -1,4 +1,4 @@
-"""Interfejs wiersza poleceń: ``skyhunt probe | bench-decode | run | status``."""
+"""Interfejs wiersza poleceń: ``skyhunt probe | bench-decode | run | status | astrophoto``."""
 from __future__ import annotations
 
 import argparse
@@ -70,6 +70,12 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--out", type=Path, default=None, help="katalog wyników (domyślnie paths.out_dir)")
     r.add_argument("--stages", default=None, help="etapy po przecinku (z zależnościami); domyślnie wszystkie")
     r.add_argument("--force", default="", help="etapy do przeliczenia (z zależnymi), 'all' = wszystko")
+
+    a = sub.add_parser("astrophoto", parents=[common],
+                       help="zdjęcie astronomiczne z sesji RAW (bez ruchomych obiektów, bez łuny)")
+    a.add_argument("input", type=Path, help="folder sesji zdjęć RAW")
+    a.add_argument("--out", type=Path, default=None, help="katalog wyników (domyślnie paths.out_dir)")
+    a.add_argument("--dark", type=Path, default=None, help="folder z darkami (domyślnie: folder z „dark” obok)")
 
     s = sub.add_parser("status", parents=[common], help="stan etapów z manifestów")
     s.add_argument("input", type=Path, nargs="?", default=None)
@@ -166,6 +172,13 @@ def cmd_status(args, cfg) -> int:
     return 0
 
 
+def cmd_astrophoto(args, cfg) -> int:
+    from .astrophoto import run
+
+    run(args.input, cfg, args.out or Path(cfg["paths"]["out_dir"]), args.dark)
+    return 0
+
+
 def _fmt_metric(v) -> str:
     return f"{v:.4g}" if isinstance(v, float) else str(v)
 
@@ -177,7 +190,8 @@ def main(argv: list[str] | None = None) -> int:
     log.setLevel(logging.DEBUG if args.verbose else logging.INFO)
     cfg = load_config(args.config, parse_set(args.set))
     log.debug("config: %s", cfg["_source"])
-    handler = {"probe": cmd_probe, "bench-decode": cmd_bench, "run": cmd_run, "status": cmd_status}[args.cmd]
+    handler = {"probe": cmd_probe, "bench-decode": cmd_bench, "run": cmd_run, "status": cmd_status,
+               "astrophoto": cmd_astrophoto}[args.cmd]
     return handler(args, cfg)
 
 

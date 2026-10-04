@@ -410,6 +410,27 @@ streaks:
     gap_max_sigma_s: 0.01    # zmierzone g używane do czasu, gdy σ ≤ tyle
     rolling_shutter_s: 0.0   # czas odczytu migawki elektronicznej (góra → dół kadru); kontrola z satelitów w identify
 
+# Zdjęcie astronomiczne z sesji RAW: `skyhunt astrophoto raw/<sesja>` (pełna rozdzielczość,
+# bez ruchomych obiektów, bez łuny) → out/<sesja>/astro/
+astrophoto:
+  dark_dir: auto             # folder z darkami (auto: pierwszy folder z „dark” w nazwie obok sesji)
+  classes: [ev0, ev+1, ev-1] # klasy bracketingu łączone w HDR
+  clip_sigma: 3.0            # piksel dalej niż tyle σ od średniej (satelita, samolot, promień kosmiczny) odpada
+  workers: 4                 # procesy dekodujące RAF (pełne RGB ~0,5 GB RAM na proces)
+  cache_dir: /content/skyhunt_astro_cache   # zdekodowane zdjęcia (~150 MB/szt.) na drugie przejście
+  bg_box_px: 128             # bloki modelu tła (pełna rozdzielczość)
+  bg_smooth_blocks: 1.0
+  bg_star_sigma: 3.0         # maska gwiazd dla modelu tła
+  protect: auto              # obiekty chronione przed modelem tła: auto = znane duże obiekty w kadrze, albo lista
+  protect_scale: 1.3         # elipsa obiektu powiększona tyle razy (słabe zewnętrzne części)
+  flat_from_background: true # f/1.0 bez flatów: kształt tła = winietowanie (dzielenie)
+  min_vignetting: 0.2        # rogi nie są wzmacniane bardziej niż 1/tyle
+  stretch_target_bg: 0.10    # jasność tła po rozciągnięciu (0…1)
+  saturation: 1.4
+  chroma_blur_px: 1.5        # odszumienie koloru (luminancja bez zmian)
+  crop_center: [2400, 1600]  # wycinek ze środka kadru (obiekt na środku)
+  jpeg_quality: 95
+
 # Nadpisania per plik (klucz = nazwa pliku); nakładane na całą konfigurację. Miejsce obserwacji
 # i role nowych nagrań wpisuje się w notebooku (MyDrive/skyhunt/sites.yaml), nie tutaj.
 files:

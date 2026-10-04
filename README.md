@@ -83,6 +83,17 @@ Zamiast wideo można przetwarzać serie zdjęć RAW (Fujifilm RAF) z bracketingi
 - **W kolejnych etapach:** jasność i błyski wzdłuż kreski, kolor (F3), planetoidy na stosie (F4).
 - **Ustawienia aparatu (X-E3):** M, f/1.0, ISO 800, migawka elektroniczna, tylko RAW (kompresja bezstratna), DR100, WB 5600 K, AE BKT ±1 EV (1/2 s, 1 s, 1/4 s), redukcja szumów długich czasów wyłączona, interwałometr.
 - Diagnostyka plików przed pierwszą sesją: [colab/raw_diagnostics.ipynb](colab/raw_diagnostics.ipynb).
+- **Notebooki:** [colab/run_photos.ipynb](colab/run_photos.ipynb) — sesje po kolei (Uruchom wszystko); [colab/astrophoto.ipynb](colab/astrophoto.ipynb) — zdjęcie astronomiczne.
+
+### Zdjęcie astronomiczne (`skyhunt astrophoto`)
+
+Odwrotność szukania kresek: z sesji RAW powstaje jedno zdjęcie nieba w pełnej rozdzielczości, `out/<sesja>/astro/` (JPEG, wycinek ze środka, TIFF 16 bit, liniowy FITS).
+- Darki: średnia klatka ciemna per czas naświetlania z folderu z „dark” w nazwie, odejmowana przed demozaikowaniem.
+- Wyrównanie mapami z astrometrii sesji (obrót nieba, ruch statywu), średnia z odrzucaniem σ w dwóch przejściach: znikają satelity, samoloty, meteory i promienie kosmiczne.
+- HDR z bracketingu: każda klasa ważona n·T, prześwietlone piksele z krótszych czasów (jądro galaktyki).
+- Tło: mediana bloków bez gwiazd i bez znanych dużych obiektów (M31, M33, M42, M45, NGC 7000…; położenie z astrometrii), kształt tła = winietowanie f/1.0 (bez flatów).
+- Kolor: mediana kolorów gwiazd pola = biel; rozciągnięcie asinh z zachowaniem koloru, odszumienie chromy.
+- Pod ładne zdjęcie: 2–3 s na klatkę (50 mm na statywie), ISO 800–1600, 300–600 zdjęć, darki i flaty.
 
 ### Planetoidy, komety i NEO
 
