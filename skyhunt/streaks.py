@@ -235,11 +235,17 @@ def refine_streak(diff: np.ndarray, p0: np.ndarray, p1: np.ndarray, dcfg: dict) 
     n = np.array([-u[1], u[0]])
     ss = np.arange(-pad, L + pad + 1e-6, 0.5)
     offs = np.arange(-half, half + 1, 1.0)
-    X = p0[0] + ss[:, None] * u[0] + offs[None] * n[0]
-    Y = p0[1] + ss[:, None] * u[1] + offs[None] * n[1]
-    prof = map_coordinates(diff, [Y, X], order=1, mode="constant", cval=np.nan)
-    cnt = np.isfinite(prof).sum(axis=1)
-    f = np.where(cnt >= max(1, len(offs) // 2), np.nansum(prof, axis=1) / np.maximum(cnt, 1) * len(offs), np.nan)
+
+    def band(shift: float) -> np.ndarray:
+        """Profil wzdłuż osi przesuniętej o ``shift`` px w poprzek: suma w pasie ±half na próbkę."""
+        X = p0[0] + ss[:, None] * u[0] + (offs[None] + shift) * n[0]
+        Y = p0[1] + ss[:, None] * u[1] + (offs[None] + shift) * n[1]
+        prof = map_coordinates(diff, [Y, X], order=1, mode="constant", cval=np.nan)
+        cnt = np.isfinite(prof).sum(axis=1)
+        return np.where(cnt >= max(1, len(offs) // 2), np.nansum(prof, axis=1) / np.maximum(cnt, 1) * len(offs),
+                        np.nan)
+
+    f = band(0.0)
     good = np.isfinite(f)
     if good.sum() < 8:
         return None
@@ -267,12 +273,54 @@ def refine_streak(diff: np.ndarray, p0: np.ndarray, p1: np.ndarray, dcfg: dict) 
     except np.linalg.LinAlgError:
         err = np.full(5, np.nan)
     length = float(s1 - s0)
-    snr = float(amp * math.sqrt(max(length, 1.0)) / max(sig_f * math.sqrt(0.5), 1e-9))
+    # S/N z pasów równoległych obok kreski (ten sam kształt, to samo okno): szum po wyrównaniu
+    # zdjęć jest skorelowany, a wzór „σ próbki · √długość” zawyżał S/N 2–3× (kreski z samego szumu)
+    ins = (ss >= s0) & (ss <= s1)
+    if ins.sum() < 6:
+        return None
+    thirds = np.array_split(np.flatnonzero(ins), 3)
+
+    off = ~((ss >= s0 - 2) & (ss <= s1 + 2))            # tło: próbki przed i za kreską
+
+    def sums(prof: np.ndarray) -> tuple[float, list[float]]:
+        ok = np.isfinite(prof) & off
+        base = float(np.median(prof[ok])) if ok.sum() >= 3 else 0.0
+        part = [float(np.nansum(prof[t] - base) * 0.5) if len(t) else float("nan") for t in thirds]
+        return float(np.nansum(part)), part
+
+    flux, flux3 = sums(np.where(good, f, np.nan))
+    ctrl, ctrl3 = [], []
+    for sh in dcfg.get("control_offsets_px", [-31, -26, -21, -16, -11, -6, 6, 11, 16, 21, 26, 31]):
+        fc = band(float(sh))
+        if np.isfinite(fc[ins]).mean() < 0.7:
+            continue                                     # pas poza zdjęciem albo w masce gwiazd
+        tot, part = sums(fc)
+        ctrl.append(tot)
+        ctrl3 += part
+    if len(ctrl) >= 4:
+        sig_flux = _clipped_std(np.array(ctrl))
+        sig_third = _clipped_std(np.array(ctrl3))
+    else:                                                # za mało pasów: wzór (zawyżony) jako zapas
+        sig_flux = sig_f * math.sqrt(max(length, 1.0) * 0.5) * 2.0
+        sig_third = sig_flux / math.sqrt(3)
+    snr = float(flux / max(sig_flux, 1e-9))
+    snr_thirds = float(np.nanmin(np.array(flux3) / max(sig_third, 1e-9))) if flux3 else float("nan")
     a, bb = p0 + u * s0, p0 + u * s1
     sel = (ss >= s0 - 3) & (ss <= s1 + 3) & good
     return {"a": a, "b": bb, "length": length, "amp": float(amp), "bg": float(b), "psf_sigma": float(w),
-            "err_a": float(err[2]), "err_b": float(err[3]), "snr": snr, "noise": sig_f,
+            "err_a": float(err[2]), "err_b": float(err[3]), "snr": snr, "snr_thirds": snr_thirds, "flux": flux,
+            "noise": sig_f, "n_control": len(ctrl),
             "profile_s": (ss[sel] - s0).astype(np.float32), "profile_f": (f[sel] - b).astype(np.float32)}
+
+
+def _clipped_std(v: np.ndarray, k: float = 4.0) -> float:
+    """Odchylenie standardowe wokół zera po odrzuceniu wartości > k·MAD (gwiazda w pasie kontrolnym)."""
+    v = v[np.isfinite(v)]
+    if not len(v):
+        return float("nan")
+    mad = 1.4826 * float(np.median(np.abs(v)))
+    keep = v[np.abs(v) <= k * max(mad, 1e-12)]
+    return float(np.sqrt(np.mean(keep ** 2))) if len(keep) >= 3 else mad
 
 
 def end_clipped(point: np.ndarray, outward: np.ndarray, blocked: np.ndarray, edge_px: int) -> bool:

@@ -380,7 +380,11 @@ streaks:
     min_pix: 12
     min_elong: 3.0           # stosunek osi obszaru (punkty/gwiazdy dają okrągłe plamy)
     min_len_px: 6            # długość kreski po doprecyzowaniu
-    min_snr: 7.0             # S/N całej kreski po dopasowaniu profilu
+    min_snr: 7.0             # S/N całej kreski: strumień vs rozrzut tych samych sum w pasach obok kreski
+    min_snr_thirds: 2.0      # każda tercja kreski ≥ tyle σ (jedna plamka szumu to nie kreska)
+    min_psf_px: 0.5          # rozmycie końców jak gwiazda: ostrzejsze = szum (dopasowanie na granicy 0,3)…
+    max_psf_px: 3.5          # …bardziej rozmyte = plama, nie kreska
+    control_offsets_px: [-31, -26, -21, -16, -11, -6, 6, 11, 16, 21, 26, 31]   # pasy kontrolne w poprzek
     max_per_photo: 30
     star_mask_snr: 6.0       # maska gwiazd: stos (bez tła) > tyle × σ różnicy…
     star_mask_grow_px: 1     # …poszerzona o tyle px

@@ -641,12 +641,28 @@ def iter_luminance(ctx: StageContext, ph, indices: list[int], pcfg: dict) -> Ite
         yield j, lum
 
 
+def streak_reject_reason(r: dict | None, dcfg: dict) -> str | None:
+    """Dlaczego kandydat nie jest kreską: brak dopasowania, za krótki, S/N z pasów kontrolnych,
+    nierówny (jedna plamka zamiast kreski), końce ostrzejsze niż gwiazda (szum) albo rozmyte."""
+    if r is None:
+        return "bez_dopasowania"
+    if r["length"] < float(dcfg["min_len_px"]):
+        return "za_krótka"
+    if not r["snr"] >= float(dcfg["min_snr"]):
+        return "S/N"
+    if not r["snr_thirds"] >= float(dcfg["min_snr_thirds"]):
+        return "nierówna"
+    if not float(dcfg["min_psf_px"]) <= r["psf_sigma"] <= float(dcfg["max_psf_px"]):
+        return "końce"
+    return None
+
+
 def photo_classes(ph, pcfg: dict) -> list[str]:
     present = list(dict.fromkeys(ph["ev"]))
     return [c for c in pcfg["stack_classes"] if c in present] + [c for c in present if c not in pcfg["stack_classes"]]
 
 
-@PHOTO_PIPELINE.stage("streaks", sections=("streaks.detect",), requires=("process",), rev=1, roles=("sky",))
+@PHOTO_PIPELINE.stage("streaks", sections=("streaks.detect",), requires=("process",), rev=2, roles=("sky",))
 def streaks(ctx: StageContext) -> dict:
     """Kreski na różnicy względem sąsiednich zdjęć tej samej klasy jasności (układ nieba)."""
     import time
@@ -670,6 +686,7 @@ def streaks(ctx: StageContext) -> dict:
     nb, shape = int(dcfg["neighbors"]), (al.h, al.w)
     det = float(dcfg["det_sigma"])
     rows, profiles, stats = [], [], []
+    rejected: dict[str, int] = {}
     t0 = time.perf_counter()
     done = 0
     ctx.log.info("[%s] kreski: różnica względem %d sąsiednich zdjęć tej samej klasy, filtr %d kierunków na %s",
@@ -729,7 +746,9 @@ def streaks(ctx: StageContext) -> dict:
                 xc, yc = al.maps(float(ph["tau_mid"][i]))
                 for s in segs[: int(dcfg["max_per_photo"])]:
                     r = refine_streak(Dn, s["p0"], s["p1"], dcfg)
-                    if r is None or r["length"] < float(dcfg["min_len_px"]) or r["snr"] < float(dcfg["min_snr"]):
+                    why = streak_reject_reason(r, dcfg)
+                    if why:
+                        rejected[why] = rejected.get(why, 0) + 1
                         continue
                     u = (r["b"] - r["a"]) / max(r["length"], 1e-9)
                     xs, ys = [r["a"][0], r["b"][0]], [r["a"][1], r["b"][1]]
@@ -744,7 +763,7 @@ def streaks(ctx: StageContext) -> dict:
                         "xa_p": float(px[0]), "ya_p": float(py[0]), "xb_p": float(px[1]), "yb_p": float(py[1]),
                         "length_px": r["length"], "angle_deg": float(np.degrees(np.arctan2(u[1], u[0])) % 180),
                         "amp": r["amp"], "psf_sigma": r["psf_sigma"], "snr": r["snr"], "noise": r["noise"],
-                        "err_a": r["err_a"], "err_b": r["err_b"],
+                        "err_a": r["err_a"], "err_b": r["err_b"], "snr_thirds": r["snr_thirds"], "flux": r["flux"],
                         "clip_a": end_clipped(r["a"], -u, blocked, int(dcfg["edge_px"])),
                         "clip_b": end_clipped(r["b"], u, blocked, int(dcfg["edge_px"])),
                         "n_pieces": len(s["pieces"]),
@@ -760,7 +779,7 @@ def streaks(ctx: StageContext) -> dict:
                              len(rows), done / max(time.perf_counter() - t0, 1e-6))
     cols = ["streak_id", "photo", "file", "ev", "set", "m", "tau_open", "exposure_s", "xa", "ya", "xb", "yb", "ya_s",
             "yb_s", "xa_p", "ya_p", "xb_p", "yb_p", "length_px", "angle_deg", "amp", "psf_sigma", "snr", "noise",
-            "err_a", "err_b", "clip_a", "clip_b", "n_pieces", "dashed"]
+            "err_a", "err_b", "snr_thirds", "flux", "clip_a", "clip_b", "n_pieces", "dashed"]
     st = pd.DataFrame(rows, columns=cols)
     st.to_parquet(ctx.outdir / "streaks.parquet", index=False)
     (pd.concat(profiles, ignore_index=True) if profiles else pd.DataFrame(columns=["streak_id", "s_px", "flux"])) \
@@ -768,9 +787,11 @@ def streaks(ctx: StageContext) -> dict:
     pd.DataFrame(stats).to_csv(ctx.outdir / "streak_stats.csv", index=False)
     rate = done / max(time.perf_counter() - t0, 1e-6)
     n_ph = int(st["photo"].nunique()) if len(st) else 0
-    ctx.log.info("[%s] kreski: %d na %d zdjęciach (z %d), %.1f zdj./s", ctx.input_path.name, len(st), n_ph, len(ph), rate)
+    ctx.log.info("[%s] kreski: %d na %d zdjęciach (z %d), %.1f zdj./s; odrzuceni kandydaci: %s", ctx.input_path.name,
+                 len(st), n_ph, len(ph), rate, ", ".join(f"{k} {v}" for k, v in sorted(rejected.items())) or "brak")
     return {"outputs": ["streaks.parquet", "streak_profiles.parquet", "streak_stats.csv"],
-            "metrics": {"streaks": len(st), "photos_with_streaks": n_ph, "photos_per_s": rate}}
+            "metrics": {"streaks": len(st), "photos_with_streaks": n_ph, "photos_per_s": rate,
+                        **{f"rejected_{k}": v for k, v in rejected.items()}}}
 
 
 @PHOTO_PIPELINE.stage("link", sections=("streaks.link", "photo.inter_frame_gap_s"),

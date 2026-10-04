@@ -49,8 +49,28 @@ def test_detect_and_refine_streak_endpoints(cfg):
     r = refine_streak(img.astype(np.float32), segs[0]["p0"], segs[0]["p1"], dcfg)
     ends = sorted([tuple(r["a"]), tuple(r["b"])])
     assert np.hypot(*(np.array(ends[0]) - a)) < 1.0 and np.hypot(*(np.array(ends[1]) - b)) < 1.0
-    assert r["amp"] == pytest.approx(6.0, rel=0.25) and r["snr"] > 20
+    assert r["amp"] == pytest.approx(6.0, rel=0.25) and r["snr"] > 15 and r["snr_thirds"] > 5 and r["n_control"] >= 8
+    assert 0.5 < r["psf_sigma"] < 1.3
     assert r["err_a"] < 1.0 and r["err_b"] < 1.0
+
+
+def test_correlated_noise_is_not_a_streak(cfg):
+    """Szum po wyrównaniu zdjęć jest skorelowany: S/N kreski liczone z pasów obok nie może z niego
+    robić kresek (stary wzór dawał tu S/N 9–15)."""
+    from scipy.ndimage import gaussian_filter
+
+    from skyhunt.streaks import refine_streak
+
+    dcfg = cfg["streaks"]["detect"]
+    rng = np.random.default_rng(11)
+    img = gaussian_filter(rng.normal(0, 1, (200, 300)), 0.8).astype(np.float32)
+    snrs = []
+    for k in range(6):
+        p0 = np.array([60.0 + 20 * k, 60.0 + 10 * k])
+        r = refine_streak(img, p0, p0 + np.array([18.0, 6.0 * (k - 2)]), dcfg)
+        if r is not None:
+            snrs.append(r["snr"])
+    assert snrs and max(snrs) < float(dcfg["min_snr"])
 
 
 def test_merge_pieces_and_dashed():
@@ -174,3 +194,15 @@ def test_set_jitter_estimate(cfg):
     shaky = synthetic_session(jitter_s=0.05)      # start serii losowo ±50 ms, wspólny dla obu obiektów
     fit = fit_gap(shaky, link_chains(shaky, lcfg, 0.0, 1333), 0.10, 0.0, 1333, lcfg)
     assert fit["set_jitter_ms"] > 15
+
+
+def test_streak_reject_reason(cfg):
+    from skyhunt.photo_stages import streak_reject_reason
+
+    dcfg = cfg["streaks"]["detect"]
+    good = {"length": 40.0, "snr": 20.0, "snr_thirds": 8.0, "psf_sigma": 1.0}
+    assert streak_reject_reason(good, dcfg) is None
+    assert streak_reject_reason(None, dcfg) == "bez_dopasowania"
+    assert streak_reject_reason(good | {"psf_sigma": 0.3}, dcfg) == "końce"        # szum: brzeg na granicy fitu
+    assert streak_reject_reason(good | {"snr_thirds": 0.5}, dcfg) == "nierówna"
+    assert streak_reject_reason(good | {"snr": float("nan")}, dcfg) == "S/N"
