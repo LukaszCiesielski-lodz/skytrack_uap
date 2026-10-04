@@ -20,12 +20,12 @@ def measure_psfs(L: np.ndarray, smask: np.ndarray, grid: tuple[int, int], size: 
     H, W = L.shape
     gy, gx = grid
     r = size // 2
-    lab, n = ndi.label(smask)
+    from .astrophoto import star_peaks
+
     psfs = np.full((gy, gx, size, size), np.nan, np.float32)
-    if n == 0:
+    peaks, vals = star_peaks(L, smask)
+    if not len(vals):
         return psfs
-    peaks = np.array(ndi.maximum_position(L, lab, index=np.arange(1, n + 1)))
-    vals = L[peaks[:, 0], peaks[:, 1]]
     hi = np.percentile(L, 99.99)
     ok = (vals < 0.5 * hi) & (vals > np.percentile(vals, 25)) & (peaks[:, 0] > r + 1) & (peaks[:, 1] > r + 1) \
         & (peaks[:, 0] < H - r - 2) & (peaks[:, 1] < W - r - 2)
@@ -39,6 +39,10 @@ def measure_psfs(L: np.ndarray, smask: np.ndarray, grid: tuple[int, int], size: 
                 c = L[y - r - 1:y + r + 2, x - r - 1:x + r + 2].astype(np.float64)
                 edge = np.concatenate([c[0], c[-1], c[:, 0], c[:, -1]])
                 c = c - np.median(edge)
+                outer = c.copy()
+                outer[r - 2:r + 5, r - 2:r + 5] = 0           # bez rdzenia gwiazdy
+                if outer.max() > 0.15 * c.max():               # jasny sąsiad psułby PSF
+                    continue
                 w = np.clip(c, 0, None)
                 if w.sum() <= 0:
                     continue

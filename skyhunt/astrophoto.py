@@ -331,17 +331,26 @@ def background_map(img: np.ndarray, mask: np.ndarray, box: int, smooth_blocks: f
     return bg
 
 
+def star_peaks(L: np.ndarray, smask: np.ndarray, size: int = 7) -> tuple[np.ndarray, np.ndarray]:
+    """Gwiazdy jako lokalne maksima w masce gwiazd (każda osobno — spójne obszary maski zlewają się
+    w gęstym polu w placki z jednym szczytem). Zwraca ([n, 2] (y, x), jasności)."""
+    from scipy.ndimage import maximum_filter
+
+    Lf = np.nan_to_num(L).astype(np.float32)
+    cand = (Lf == maximum_filter(Lf, size=size)) & smask & (Lf > 0)
+    ys, xs = np.nonzero(cand)
+    return np.column_stack([ys, xs]), Lf[ys, xs]
+
+
 def star_color_factors(img: np.ndarray, smask: np.ndarray, n_max: int = 400) -> tuple[np.ndarray, int]:
     """Mnożniki R, G, B, po których mediana koloru gwiazd pola jest biała (średnia gwiazda pola
     ma B−V ≈ 0,6, prawie jak Słońce). Fotometria w oknach 7×7 wokół najjaśniejszych pikseli."""
     from scipy import ndimage as ndi
 
     lum = np.nan_to_num(img.mean(axis=-1))
-    lab, n = ndi.label(smask)
-    if n == 0:
+    peaks, vals = star_peaks(lum, smask)
+    if not len(vals):
         return np.ones(3, np.float32), 0
-    peaks = ndi.maximum_position(lum, lab, index=np.arange(1, n + 1))
-    vals = np.array([lum[p] for p in peaks])
     order = np.argsort(-vals)
     hi = np.nanpercentile(lum, 99.99)
     ratios = []
@@ -587,11 +596,9 @@ def fit_lateral_ca(img: np.ndarray, smask: np.ndarray, max_stars: int = 1500) ->
 
     H, W, _ = img.shape
     lum = np.nan_to_num(img.mean(axis=-1))
-    lab, n = ndi.label(smask)
-    if n < 20:
+    peaks, vals = star_peaks(lum, smask)
+    if len(vals) < 20:
         return {"stars": 0}
-    peaks = ndi.maximum_position(lum, lab, index=np.arange(1, n + 1))
-    vals = np.array([lum[p] for p in peaks])
     hi = np.percentile(lum, 99.99)
     order = [j for j in np.argsort(-vals) if vals[j] < 0.9 * hi][:max_stars]
     r = 4
