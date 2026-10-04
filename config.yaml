@@ -426,8 +426,22 @@ astrophoto:
   flat_from_background: true # f/1.0 bez flatów: kształt tła = winietowanie (dzielenie)
   min_vignetting: 0.2        # rogi nie są wzmacniane bardziej niż 1/tyle
   stretch_target_bg: 0.10    # jasność tła po rozciągnięciu (0…1)
-  saturation: 1.4
+  saturation: 1.4            # nasycenie galaktyk, mgławic, tła…
+  star_saturation: 0.7       # …a gwiazd mniej (aberracja chromatyczna f/1.0 barwi ich obwódki)
   chroma_blur_px: 1.5        # odszumienie koloru (luminancja bez zmian)
+  ca_correction: true        # aberracja chromatyczna poprzeczna: R i B przeskalowane na G (pomiar na gwiazdach)
+  autocrop: true             # kadr tylko z obszaru pokrytego przez wszystkie zdjęcia
+  autocrop_margin_px: 8
+  n2n: true                  # Noise2Noise: odszumiacz uczony na połówkach stosu (parzyste / nieparzyste zdjęcia)
+  n2n_steps: 2500
+  n2n_patch: 128
+  n2n_batch: 16
+  n2n_lr: 0.001
+  deconv: true               # dekonwolucja Richardsona–Lucy z PSF zmierzonym na gwiazdach (po Noise2Noise)
+  deconv_grid: [2, 3]        # kafelki PSF: wiersze × kolumny (gwiazdy w rogach f/1.0 mają inny kształt)
+  deconv_psf_px: 15
+  deconv_iters: 12
+  deconv_strength: 0.7       # 0 = bez wyostrzenia, 1 = pełny wynik RL
   crop_center: [2400, 1600]  # wycinek ze środka kadru (obiekt na środku)
   jpeg_quality: 95
 

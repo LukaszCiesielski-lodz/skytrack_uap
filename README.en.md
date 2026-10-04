@@ -93,6 +93,8 @@ The inverse of streak hunting: one full-resolution sky image from a RAW session,
 - HDR from bracketing: each class weighted by n·T, saturated pixels taken from shorter exposures (galaxy core).
 - Background: block medians without stars and without known large objects (M31, M33, M42, M45, NGC 7000…; placed via astrometry); the background shape is used as the f/1.0 vignetting (no flats).
 - Color: the median field-star color is set to white; colour-preserving asinh stretch, chroma denoising.
+- Lateral chromatic aberration measured on stars (R and B scale vs G) and corrected; the frame is cropped to the area covered by all photos; stars are less saturated than the galaxy.
+- Variants: `_n2n` — **Noise2Noise** (a PyTorch U-Net trained on two half-stacks of the same session: nothing is invented), `_n2n_deconv` — plus **Richardson–Lucy deconvolution** with the PSF measured on stars in 2×3 tiles. The HDR stack is saved, so later runs only reprocess it (`--restack` rebuilds it).
 - For a showcase image: 2–3 s per frame (50 mm on a tripod), ISO 800–1600, 300–600 frames, darks and flats.
 
 ### Asteroids, comets and NEOs

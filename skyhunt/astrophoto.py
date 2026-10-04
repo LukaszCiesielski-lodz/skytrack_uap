@@ -192,20 +192,34 @@ class ClipStack:
         self.std = (self.s2 / n - m * m).clamp(min=0).sqrt()
         self.s1 = self.s2 = self.ref = None
         self.cs, self.cn = t.zeros_like(self.mean), t.zeros_like(self.n)
+        # dwie połówki (zdjęcia parzyste / nieparzyste klasy): niezależny szum do Noise2Noise
+        self.hs = [t.zeros_like(self.mean), t.zeros_like(self.mean)]
+        self.hn = [t.zeros_like(self.n), t.zeros_like(self.n)]
 
-    def add2(self, a) -> float:
+    def add2(self, a, half: int | None = None) -> float:
         t = __import__("torch")
         ok = t.isfinite(a).all(dim=0)
         dev = (t.nan_to_num(a) - self.mean).abs() / self.std.clamp(min=1e-3)
         keep = ok & ((dev <= self.k).all(dim=0) | (self.n < 3))
         self.cs += t.where(keep[None], t.nan_to_num(a), t.zeros_like(a))
         self.cn += keep.to(t.int16)
+        if half is not None:
+            self.hs[half] += t.where(keep[None], t.nan_to_num(a), t.zeros_like(a))
+            self.hn[half] += keep.to(t.int16)
         return float(1 - keep[ok].float().mean()) if bool(ok.any()) else 0.0
 
     def result(self):
         t = __import__("torch")
         n = self.cn.float()[None]
         return t.where(n > 0, self.cs / n.clamp(min=1), t.full_like(self.cs, float("nan"))), self.cn
+
+    def result_halves(self):
+        t = __import__("torch")
+        out = []
+        for s, n in zip(self.hs, self.hn):
+            nf = n.float()[None]
+            out.append((t.where(nf > 0, s / nf.clamp(min=1), t.full_like(s, float("nan"))), n))
+        return out
 
 
 # ---------------------------------------------------------------- HDR, tło, kolor, rozciągnięcie
@@ -347,7 +361,7 @@ def star_color_factors(img: np.ndarray, smask: np.ndarray, n_max: int = 400) -> 
     return (1.0 / med).astype(np.float32), len(ratios)
 
 
-def asinh_stretch(img: np.ndarray, bgmask: np.ndarray, target_bg: float, saturation: float,
+def asinh_stretch(img: np.ndarray, bgmask: np.ndarray, target_bg: float, saturation,
                   chroma_blur: float) -> np.ndarray:
     """Liniowe RGB (tło ≈ 0) → 0…1: rozciągnięcie asinh luminancji, ten sam mnożnik dla R, G, B
     (kolor gwiazd zostaje), tło na poziomie ``target_bg``, wzmocnienie nasycenia, rozmycie chromy."""
@@ -379,7 +393,8 @@ def asinh_stretch(img: np.ndarray, bgmask: np.ndarray, target_bg: float, saturat
     chroma = rgb - lum
     if chroma_blur > 0:
         chroma = np.stack([gaussian_filter(chroma[..., c], chroma_blur) for c in range(3)], axis=-1)
-    out = lum + saturation * chroma
+    sat = np.asarray(saturation, np.float32)
+    out = lum + (sat[..., None] if sat.ndim == 2 else sat) * chroma        # mapa: gwiazdy mniej nasycone
     return np.clip(out, 0, 1).astype(np.float32)
 
 
@@ -414,16 +429,15 @@ def save_outputs(out_dir: Path, name: str, img01: np.ndarray, linear: np.ndarray
 
 # ---------------------------------------------------------------- całość
 
-def run(folder: Path, cfg: dict, out_root: Path, dark_dir: Path | None = None) -> dict:
+def run(folder: Path, cfg: dict, out_root: Path, dark_dir: Path | None = None, restack: bool = False) -> dict:
+    """Sesja RAW → zdjęcie w out/<sesja>/astro/. Stos HDR (i jego połówki do Noise2Noise) jest
+    zapisywany; kolejne uruchomienia robią samą obróbkę, chyba że ``restack``."""
     import pandas as pd
-    import torch
 
     from . import photo_stages  # noqa: F401 — rejestracja etapów zdjęć
-    from .astrometry import load_wcs
     from .config import config_for_file
     from .pipeline import PHOTO_PIPELINE, StageContext, input_outdir
     from .photo_stages import alignment, stack_device
-    from .raw import list_photos
 
     folder = Path(folder)
     cfg = config_for_file(cfg, folder)
@@ -436,6 +450,38 @@ def run(folder: Path, cfg: dict, out_root: Path, dark_dir: Path | None = None) -
     workers = max(1, min(int(acfg["workers"]), (os.cpu_count() or 2) - 1))
     dev = stack_device(cfg["photo"]) or "cpu"
 
+    classes = [c for c in acfg["classes"] if c in set(ph["ev"])]
+    exposures = {c: float(ph.loc[ph["ev"] == c, "exposure_s"].median()) for c in classes}
+    astro = outdir / "astro"
+    stack_file, cov_file = astro / "stack_hdr.npy", astro / "coverage.npy"
+    half_files = (astro / "stack_hdr_a.npy", astro / "stack_hdr_b.npy")
+    if stack_file.exists() and cov_file.exists() and not restack:
+        lin, cov = np.load(stack_file), np.load(cov_file)
+        halves = tuple(np.load(p) for p in half_files) if all(p.exists() for p in half_files) else None
+        old = astro / "astro.json"
+        dark_used = json.loads(old.read_text(encoding="utf-8")).get("darks", {}) if old.exists() else {}
+        log.info("[%s] stos HDR z poprzedniego przebiegu (%s) — sama obróbka; --restack liczy stos od nowa",
+                 folder.name, stack_file.name)
+    else:
+        lin, cov, dark_used, halves = _stack_session(folder, cfg, out_root, dark_dir, ph, al, classes, exposures,
+                                                     workers, dev)
+        astro.mkdir(parents=True, exist_ok=True)
+        np.save(stack_file, lin)
+        np.save(cov_file, cov)
+        for p, h in zip(half_files, halves):
+            np.save(p, h)
+    return finish(folder, ctx, outdir, acfg, ph, classes, exposures, lin, cov, dark_used, halves, dev)
+
+
+def _stack_session(folder, cfg, out_root, dark_dir, ph, al, classes, exposures, workers, dev):
+    """Darki → dekodowanie → dwa przejścia odrzucania σ per klasa → HDR. Zwraca (obraz DN/s,
+    pokrycie klasą główną, czy był dark per klasa)."""
+    import torch
+
+    from .pipeline import input_outdir
+    from .raw import list_photos
+
+    acfg = cfg["astrophoto"]
     # darki
     dark_map: dict[float, Path] = {}
     if dark_dir is None and str(acfg.get("dark_dir", "auto")) == "auto":
@@ -485,6 +531,10 @@ def run(folder: Path, cfg: dict, out_root: Path, dark_dir: Path | None = None) -
     darks = [dark_for(float(ph["exposure_s"][i])) for i in sel]
 
     warper, stacks = None, {c: ClipStack(float(acfg["clip_sigma"])) for c in classes}
+    half = {}
+    for c in classes:                                    # parzyste / nieparzyste zdjęcia każdej klasy
+        for k, i in enumerate(i for i in sel if ph["ev"][i] == c):
+            half[i] = k % 2
     for p in (1, 2):
         rej = []
         for j, rgb in iter_full(paths, darks, caches, workers):
@@ -498,7 +548,7 @@ def run(folder: Path, cfg: dict, out_root: Path, dark_dir: Path | None = None) -
             if p == 1:
                 st.add1(a)
             else:
-                rej.append(st.add2(a))
+                rej.append(st.add2(a, half[i]))
             if (j + 1) % 30 == 0:
                 log.info("[%s] przejście %d: %d/%d zdjęć", folder.name, p, j + 1, len(sel))
         if p == 1:
@@ -508,43 +558,203 @@ def run(folder: Path, cfg: dict, out_root: Path, dark_dir: Path | None = None) -
             log.info("[%s] odrzucone piksele (ruchome obiekty, promienie kosmiczne): mediana %.3f%%", folder.name,
                      100 * float(np.median(rej)) if rej else 0.0)
     means, counts = {}, {}
+    hm = [{}, {}]
+    hc = [{}, {}]
     for c, st in stacks.items():
         m, n = st.result()
         means[c] = m.permute(1, 2, 0).cpu().numpy()
         counts[c] = n.cpu().numpy()
+        for h, (mh, nh) in enumerate(st.result_halves()):
+            hm[h][c] = mh.permute(1, 2, 0).cpu().numpy()
+            hc[h][c] = nh.cpu().numpy()
     del stacks
     torch.cuda.empty_cache() if dev != "cpu" else None
     lin = hdr_merge(means, counts, exposures)
     del means
+    halves = tuple(hdr_merge(hm[h], hc[h], exposures) for h in (0, 1))
+    return lin, counts[classes[0]], {c: bool(dark_for(exposures[c])) for c in classes}, halves
 
-    # tło, winietowanie, kolor
+
+
+
+# ---------------------------------------------------------------- aberracja, kadr, gwiazdy
+
+def fit_lateral_ca(img: np.ndarray, smask: np.ndarray, max_stars: int = 1500) -> dict:
+    """Aberracja chromatyczna poprzeczna: obraz w R i B ma inną skalę niż w G (kolorowe obwódki
+    gwiazd rosnące ku brzegom). Centroidy gwiazd w R, G, B → dla R i B model przesunięcia
+    d = s·(p − środek) + t (odporne dopasowanie). Zwraca parametry dla ``apply_lateral_ca``."""
+    from scipy import ndimage as ndi
+
+    H, W, _ = img.shape
+    lum = np.nan_to_num(img.mean(axis=-1))
+    lab, n = ndi.label(smask)
+    if n < 20:
+        return {"stars": 0}
+    peaks = ndi.maximum_position(lum, lab, index=np.arange(1, n + 1))
+    vals = np.array([lum[p] for p in peaks])
+    hi = np.percentile(lum, 99.99)
+    order = [j for j in np.argsort(-vals) if vals[j] < 0.9 * hi][:max_stars]
+    r = 4
+    yy, xx = np.mgrid[-r:r + 1, -r:r + 1]
+    rows = []
+    for j in order:
+        y, x = peaks[j]
+        if y < r or x < r or y >= H - r or x >= W - r:
+            continue
+        win = np.nan_to_num(img[y - r:y + r + 1, x - r:x + r + 1])
+        cen = []
+        for c in range(3):
+            v = win[..., c]
+            edge = np.concatenate([v[0], v[-1], v[:, 0], v[:, -1]])
+            w = np.clip(v - np.median(edge), 0, None)
+            if w.sum() <= 0:
+                break
+            cen.append(((w * xx).sum() / w.sum(), (w * yy).sum() / w.sum()))
+        if len(cen) == 3:
+            rows.append((x, y, *cen[0], *cen[1], *cen[2]))
+    if len(rows) < 30:
+        return {"stars": len(rows)}
+    a = np.array(rows)
+    x, y = a[:, 0], a[:, 1]
+    cx, cy = (W - 1) / 2, (H - 1) / 2
+    info = {"stars": len(rows), "center": [cx, cy]}
+    for c, (ix, iy) in (("R", (2, 3)), ("B", (6, 7))):
+        dx, dy = a[:, ix] - a[:, 4], a[:, iy] - a[:, 5]
+        A = np.vstack([np.column_stack([x - cx, np.ones_like(x), np.zeros_like(x)]),
+                       np.column_stack([y - cy, np.zeros_like(y), np.ones_like(y)])])
+        b = np.concatenate([dx, dy])
+        keep = np.ones(len(b), bool)
+        for _ in range(3):                               # odrzucanie > 3 MAD (blendy, gwiazdy podwójne)
+            p, *_ = np.linalg.lstsq(A[keep], b[keep], rcond=None)
+            res = b - A @ p
+            keep = np.abs(res) <= 3 * (1.4826 * float(np.median(np.abs(res[keep]))) + 1e-6)
+        s, tx, ty = (float(v) for v in p)
+        info[c] = {"scale": s, "shift_px": [tx, ty], "corner_px": float(s * math.hypot(cx, cy))}
+    return info
+
+
+def apply_lateral_ca(img: np.ndarray, info: dict) -> np.ndarray:
+    """Kanały R i B przeskalowane na G: R'(p) = R(p + s·(p − c) + t)."""
+    from scipy import ndimage as ndi
+
+    if "R" not in info:
+        return img
+    cx, cy = info["center"]
+    out = img.copy()
+    for k, c in ((0, "R"), (2, "B")):
+        s = info[c]["scale"]
+        tx, ty = info[c]["shift_px"]
+        out[..., k] = ndi.affine_transform(np.nan_to_num(img[..., k]), [1 + s, 1 + s],
+                                           offset=[ty - s * cy, tx - s * cx], order=1, mode="nearest")
+    return out
+
+
+def valid_rect(valid: np.ndarray, frac: float = 0.995, step: int = 4) -> tuple[int, int, int, int]:
+    """Prostokąt pokryty przez (prawie) wszystkie zdjęcia: krawędź z najgorszym pokryciem
+    przesuwana do środka, aż każda ma ≥ ``frac`` dobrych pikseli. Zwraca (y0, y1, x0, x1)."""
+    H, W = valid.shape
+    y0, y1, x0, x1 = 0, H, 0, W
+    while y1 - y0 > 2 * step and x1 - x0 > 2 * step:
+        edges = {"top": valid[y0, x0:x1].mean(), "bottom": valid[y1 - 1, x0:x1].mean(),
+                 "left": valid[y0:y1, x0].mean(), "right": valid[y0:y1, x1 - 1].mean()}
+        worst = min(edges, key=edges.get)
+        if edges[worst] >= frac:
+            break
+        if worst == "top":
+            y0 += step
+        elif worst == "bottom":
+            y1 -= step
+        elif worst == "left":
+            x0 += step
+        else:
+            x1 -= step
+    return y0, y1, x0, x1
+
+
+def star_weight(smask: np.ndarray, blur: float = 2.0) -> np.ndarray:
+    """0…1: na ile piksel należy do gwiazdy (maska poszerzona i rozmyta) — do przygaszenia koloru gwiazd."""
+    from scipy.ndimage import binary_dilation, gaussian_filter
+
+    return np.clip(gaussian_filter(binary_dilation(smask, iterations=2).astype(np.float32), blur) * 1.5, 0, 1)
+
+
+def finish(folder, ctx, outdir, acfg, ph, classes, exposures, lin, cov, dark_used, halves, dev) -> dict:
+    """Stos HDR (DN/s) → tło, winietowanie, aberracja chromatyczna, kolor, kadr, rozciągnięcie;
+    warianty: bazowy, Noise2Noise (połówki stosu), Noise2Noise + dekonwolucja PSF."""
+    from .astrometry import load_wcs
+
     wcsinfo = ctx.read_json("wcs.json")
     wcs_s = load_wcs(outdir / wcsinfo["reference_wcs"])
     lum = np.nanmean(lin, axis=-1)
     smask = star_mask(lum, float(acfg["bg_star_sigma"]))
     pmask, protected = protect_mask(wcs_s, lum.shape, acfg.get("protect", "auto"), float(acfg["protect_scale"]))
-    valid = np.isfinite(lin).all(axis=-1) & (counts[classes[0]] >= max(3, 0.5 * np.median(counts[classes[0]])))
+    valid = np.isfinite(lin).all(axis=-1) & (cov >= max(3, 0.5 * np.median(cov)))
     bgmask = ~smask & ~pmask & valid
     bg = background_map(np.where(valid[..., None], lin, np.nan), ~bgmask, int(acfg["bg_box_px"]),
                         float(acfg["bg_smooth_blocks"]))
-    flat = lin - bg
     vign = None
     if acfg.get("flat_from_background", True):
         bl = bg.mean(axis=-1)
         vign = np.clip(bl / np.nanpercentile(bl[valid], 99.5), float(acfg["min_vignetting"]), 1.0)
-        flat = flat / vign[..., None]
+
+    def calibrate(x: np.ndarray) -> np.ndarray:
+        f = x - bg
+        if vign is not None:
+            f = f / vign[..., None]
+        f[~valid] = 0.0
+        return f
+
+    flat = calibrate(lin)
+    ca = fit_lateral_ca(flat, smask & valid & ~pmask) if acfg.get("ca_correction", True) else {}
+    if "R" in ca:
+        flat = apply_lateral_ca(flat, ca)
+        log.info("[%s] aberracja chromatyczna: R %+.2f px, B %+.2f px w rogu kadru (%d gwiazd) — skorygowana",
+                 folder.name, ca["R"]["corner_px"], ca["B"]["corner_px"], ca["stars"])
     factors, n_stars = star_color_factors(flat, smask & valid & ~pmask)
     flat = flat * factors
-    flat[~valid] = 0.0
-    img01 = asinh_stretch(flat, bgmask, float(acfg["stretch_target_bg"]), float(acfg["saturation"]),
-                          float(acfg["chroma_blur_px"]))
+    y0, y1, x0, x1 = 0, flat.shape[0], 0, flat.shape[1]
+    if acfg.get("autocrop", True):                       # bez ciemnej ramki z obrotu nieba i ruchu statywu
+        y0, y1, x0, x1 = valid_rect(cov >= 0.9 * float(np.max(cov)))
+        m = int(acfg.get("autocrop_margin_px", 8))
+        y0, y1, x0, x1 = y0 + m, y1 - m, x0 + m, x1 - m
+    crop = (slice(y0, y1), slice(x0, x1))
+    flat, bgc, sm = flat[crop], bgmask[crop], smask[crop]
+    sw = star_weight(sm)
+    sat_map = float(acfg["saturation"]) * (1 - sw) + float(acfg["star_saturation"]) * sw
     astro = outdir / "astro"
-    files = save_outputs(astro, folder.name, img01, flat, tuple(acfg["crop_center"]), int(acfg["jpeg_quality"]))
+
+    def render(img: np.ndarray, suffix: str) -> list[str]:
+        out = asinh_stretch(img, bgc, float(acfg["stretch_target_bg"]), sat_map, float(acfg["chroma_blur_px"]))
+        return save_outputs(astro, folder.name + suffix, out, img, tuple(acfg["crop_center"]),
+                            int(acfg["jpeg_quality"]))
+
+    files = render(flat, "")
+    n2n_info, dec_info = None, None
+    if acfg.get("n2n", True) and halves is not None:
+        from . import n2n
+
+        hs = []
+        for h in halves:
+            f = calibrate(h)
+            if "R" in ca:
+                f = apply_lateral_ca(f, ca)
+            hs.append((f * factors)[crop])
+        den, n2n_info = n2n.denoise_halves(hs[0], hs[1], bgc, acfg, dev)
+        del hs
+        files += render(den, "_n2n")
+        if acfg.get("deconv", True):
+            from .deconv import deconvolve
+
+            sharp, dec_info = deconvolve(den, sm, bgc, acfg, dev)
+            files += render(sharp, "_n2n_deconv")
+    elif acfg.get("n2n", True):
+        log.warning("[%s] brak połówek stosu (stos sprzed tej wersji) — Noise2Noise po --restack", folder.name)
     info = {"frames": {c: int((ph["ev"] == c).sum()) for c in classes}, "exposures_s": exposures,
-            "darks": {c: bool(dark_for(exposures[c])) for c in classes}, "protected": protected,
-            "color_factors_rgb": factors.tolist(), "color_stars": n_stars, "shape": list(img01.shape[:2]),
+            "darks": dark_used, "protected": protected, "chromatic_aberration": ca,
+            "color_factors_rgb": factors.tolist(), "color_stars": n_stars, "crop_yx": [y0, y1, x0, x1],
+            "shape": [y1 - y0, x1 - x0], "noise2noise": n2n_info, "deconvolution": dec_info,
             "vignetting_min": float(np.nanmin(vign[valid])) if vign is not None else None, "files": files}
-    (astro / "astro.json").write_text(json.dumps(info, indent=1, ensure_ascii=False), encoding="utf-8")
+    (astro / "astro.json").write_text(json.dumps(info, indent=1, ensure_ascii=False, default=float), encoding="utf-8")
     log.info("[%s] zdjęcie: %s (chronione przed modelem tła: %s; kolor z %d gwiazd)", folder.name,
-             ", ".join(files), ", ".join(protected) or "nic", n_stars)
+             ", ".join(f for f in files if f.endswith(".jpg")), ", ".join(protected) or "nic", n_stars)
     return info

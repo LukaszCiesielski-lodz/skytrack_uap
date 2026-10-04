@@ -76,6 +76,7 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("input", type=Path, help="folder sesji zdjęć RAW")
     a.add_argument("--out", type=Path, default=None, help="katalog wyników (domyślnie paths.out_dir)")
     a.add_argument("--dark", type=Path, default=None, help="folder z darkami (domyślnie: folder z „dark” obok)")
+    a.add_argument("--restack", action="store_true", help="policz stos od nowa (domyślnie: sama obróbka zapisanego)")
 
     s = sub.add_parser("status", parents=[common], help="stan etapów z manifestów")
     s.add_argument("input", type=Path, nargs="?", default=None)
@@ -175,7 +176,7 @@ def cmd_status(args, cfg) -> int:
 def cmd_astrophoto(args, cfg) -> int:
     from .astrophoto import run
 
-    run(args.input, cfg, args.out or Path(cfg["paths"]["out_dir"]), args.dark)
+    run(args.input, cfg, args.out or Path(cfg["paths"]["out_dir"]), args.dark, restack=args.restack)
     return 0
 
 

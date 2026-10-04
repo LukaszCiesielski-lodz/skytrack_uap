@@ -93,6 +93,8 @@ Odwrotność szukania kresek: z sesji RAW powstaje jedno zdjęcie nieba w pełne
 - HDR z bracketingu: każda klasa ważona n·T, prześwietlone piksele z krótszych czasów (jądro galaktyki).
 - Tło: mediana bloków bez gwiazd i bez znanych dużych obiektów (M31, M33, M42, M45, NGC 7000…; położenie z astrometrii), kształt tła = winietowanie f/1.0 (bez flatów).
 - Kolor: mediana kolorów gwiazd pola = biel; rozciągnięcie asinh z zachowaniem koloru, odszumienie chromy.
+- Aberracja chromatyczna poprzeczna mierzona na gwiazdach (skala R i B względem G) i korygowana; kadr przycięty do obszaru wspólnego wszystkich zdjęć; gwiazdy mniej nasycone niż galaktyka.
+- Warianty: `_n2n` — **Noise2Noise** (U-Net w PyTorch uczony na dwóch połówkach stosu tej samej sesji: niczego nie dorysowuje), `_n2n_deconv` — dodatkowo **dekonwolucja Richardsona–Lucy** z PSF zmierzonym na gwiazdach w 2×3 kafelkach kadru. Stos HDR jest zapisywany: kolejne uruchomienia to sama obróbka (`--restack` liczy od nowa).
 - Pod ładne zdjęcie: 2–3 s na klatkę (50 mm na statywie), ISO 800–1600, 300–600 zdjęć, darki i flaty.
 
 ### Planetoidy, komety i NEO

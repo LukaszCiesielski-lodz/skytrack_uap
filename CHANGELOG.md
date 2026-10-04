@@ -12,6 +12,7 @@
   - rozciągnięcie asinh z zachowaniem koloru.
 
   Wynik w `out/<sesja>/astro/`.
+- **Obróbka zdjęcia:** korekta aberracji chromatycznej poprzecznej na gwiazdach, automatyczne przycięcie, przygaszony kolor gwiazd; warianty **Noise2Noise** (U-Net uczony na połówkach stosu parzyste/nieparzyste) i **Noise2Noise + dekonwolucja Richardsona–Lucy** (PSF z gwiazd w kafelkach). Stos HDR i połówki zapisywane (`stack_hdr*.npy`), `--restack` liczy od nowa.
 - **Notebook `colab/run_photos.ipynb`:** sesje zdjęć jedna po drugiej („Uruchom wszystko”) z podglądem stron raportu.
 - **Kreski (`streaks` rev 2):**
   - S/N liczone z 12 pasów kontrolnych obok kreski. Szum po wyrównaniu jest skorelowany, a stary wzór zawyżał S/N 2–3×: w s2 było ~1700 „kresek” z samego szumu.

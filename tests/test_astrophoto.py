@@ -86,3 +86,83 @@ def test_full_res_warper_identity():
     out = FullResWarper((h, w), (3 * h, 3 * w), "cpu")(rgb, gx, gy)
     got = out.permute(1, 2, 0).numpy()
     assert np.allclose(got[1:3 * h - 2, 1:3 * w - 2], rgb[1:3 * h - 2, 1:3 * w - 2], atol=1e-3)
+
+
+def _stars(shape, n, sigma, rng, shift=None, amp=(20, 100)):
+    """Pole gwiazd (Gauss) w 3 kanałach; ``shift(c, x, y)`` → przesunięcie gwiazdy w kanale c."""
+    H, W = shape
+    img = np.zeros((H, W, 3), np.float32)
+    yy, xx = np.mgrid[-6:7, -6:7]
+    for _ in range(n):
+        x, y, a = rng.uniform(12, W - 12), rng.uniform(12, H - 12), rng.uniform(*amp)
+        for c in range(3):
+            dx, dy = shift(c, x, y) if shift else (0.0, 0.0)
+            xi, yi = int(x), int(y)
+            g = a * np.exp(-((xx - (x + dx - xi)) ** 2 + (yy - (y + dy - yi)) ** 2) / (2 * sigma ** 2))
+            img[yi - 6:yi + 7, xi - 6:xi + 7, c] += g
+    return img
+
+
+def test_lateral_ca_fit_and_correction():
+    from scipy.ndimage import binary_dilation
+
+    from skyhunt.astrophoto import apply_lateral_ca, fit_lateral_ca
+
+    H, W, s = 400, 600, 0.003
+    cx, cy = (W - 1) / 2, (H - 1) / 2
+
+    def shift(c, x, y):                                  # R powiększone, B pomniejszone względem G
+        k = {0: s, 1: 0.0, 2: -s}[c]
+        return k * (x - cx), k * (y - cy)
+
+    img = _stars((H, W), 160, 1.2, np.random.default_rng(4), shift)
+    smask = binary_dilation(img.mean(axis=-1) > 3, iterations=2)
+    info = fit_lateral_ca(img, smask)
+    assert info["R"]["scale"] == pytest.approx(s, abs=5e-4) and info["B"]["scale"] == pytest.approx(-s, abs=5e-4)
+    again = fit_lateral_ca(apply_lateral_ca(img, info), smask)
+    assert abs(again["R"]["scale"]) < 5e-4 and abs(again["B"]["scale"]) < 5e-4
+
+
+def test_valid_rect_inside_rotated_coverage():
+    from skyhunt.astrophoto import valid_rect
+
+    H, W = 300, 450
+    yy, xx = np.mgrid[0:H, 0:W]
+    th = np.radians(3)                                   # pokrycie: prostokąt obrócony o 3°
+    u = (xx - W / 2) * np.cos(th) + (yy - H / 2) * np.sin(th)
+    v = -(xx - W / 2) * np.sin(th) + (yy - H / 2) * np.cos(th)
+    valid = (np.abs(u) < 210) & (np.abs(v) < 130)
+    y0, y1, x0, x1 = valid_rect(valid, frac=1.0, step=2)
+    assert valid[y0:y1, x0:x1].all() and (y1 - y0) * (x1 - x0) > 0.7 * valid.sum()
+
+
+def test_n2n_tiling_is_seamless():
+    torch = pytest.importorskip("torch")
+    from skyhunt.n2n import _unet, apply
+
+    net = _unet()
+    with torch.no_grad():                                # poprawka = 0 → sieć tożsamościowa
+        net.out.weight.zero_()
+        net.out.bias.zero_()
+    img = np.random.default_rng(5).normal(0, 1, (300, 700, 3)).astype(np.float32)
+    out = apply(net.eval(), img, "cpu", tile=128, overlap=16)
+    assert np.allclose(out, img, atol=1e-5)
+
+
+def test_psf_measurement_and_deconvolution_sharpen_stars(cfg):
+    pytest.importorskip("torch")
+    from scipy.ndimage import binary_dilation
+
+    from skyhunt.deconv import deconvolve, measure_psfs
+
+    rng = np.random.default_rng(6)
+    img = _stars((300, 450), 120, 1.5, rng, amp=(5, 400)) + rng.normal(0, 0.2, (300, 450, 3)).astype(np.float32)
+    L = img.mean(axis=-1)
+    smask = binary_dilation(L > 3, iterations=3)
+    psf = measure_psfs(L, smask, (1, 1))[0, 0]
+    sig = np.sqrt((psf * (np.arange(15) - 7)[:, None] ** 2).sum())
+    assert 1.2 < sig < 2.2                               # σ = 1,5 px (+ rozmycie centrowania)
+    acfg = dict(cfg["astrophoto"]) | {"deconv_grid": [1, 1], "deconv_strength": 1.0}
+    out, info = deconvolve(img, smask, ~smask, acfg, "cpu")
+    assert info["applied"]
+    assert out.mean(axis=-1)[smask].max() > 1.3 * L[smask].max()     # gwiazdy ostrzejsze (wyższe szczyty)
