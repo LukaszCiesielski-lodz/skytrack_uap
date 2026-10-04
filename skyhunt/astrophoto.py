@@ -40,14 +40,23 @@ DEEP_OBJECTS = {
 
 # ---------------------------------------------------------------- darki i dekodowanie
 
-def _dark_raw(path: str) -> tuple[float, np.ndarray]:
+def _dark_chunk(paths: list[str]) -> dict[float, tuple[np.ndarray, int]]:
+    """Proces roboczy: suma klatek ciemnych per czas naświetlania (do głównego procesu idą tylko
+    sumy, nie każda klatka — 97 MB na klatkę zapychało RAM Colaba). Cała matryca: marginesy
+    „widoczne” bywają różne w darkach i zdjęciach."""
     import rawpy
 
     from .raw import read_raf_exif
 
-    exp = float(read_raf_exif(Path(path))["exposure_s"] or 0.0)
-    with rawpy.imread(path) as r:
-        return exp, r.raw_image.astype(np.float32)          # cała matryca: marginesy „widoczne” bywają różne
+    out: dict[float, tuple[np.ndarray, int]] = {}
+    for path in paths:
+        exp = float(read_raf_exif(Path(path))["exposure_s"] or 0.0)
+        with rawpy.imread(path) as r:
+            raw = r.raw_image
+            s, n = out.get(exp, (np.zeros(raw.shape, np.float32), 0))
+            s += raw
+            out[exp] = (s, n + 1)
+    return out
 
 
 def master_darks(folder: Path, out_dir: Path, workers: int) -> dict[float, Path]:
@@ -71,9 +80,15 @@ def master_darks(folder: Path, out_dir: Path, workers: int) -> dict[float, Path]
     sums: dict[float, np.ndarray] = {}
     cnt: dict[float, int] = {}
     with cf.ProcessPoolExecutor(max_workers=workers, mp_context=mp.get_context("spawn")) as ex:
-        for exp, raw in ex.map(_dark_raw, [str(f) for f in files]):
-            sums[exp] = sums.get(exp, 0) + raw
-            cnt[exp] = cnt.get(exp, 0) + 1
+        chunks = [[str(f) for f in files[k::workers]] for k in range(workers)]
+        for part in ex.map(_dark_chunk, [c for c in chunks if c]):
+            for exp, (s, n) in part.items():
+                if exp in sums and sums[exp].shape != s.shape:
+                    log.warning("darki %g s: różne rozmiary matrycy %s i %s — pomijam część", exp, sums[exp].shape,
+                                s.shape)
+                    continue
+                sums[exp] = sums[exp] + s if exp in sums else s
+                cnt[exp] = cnt.get(exp, 0) + n
     for exp, s in sums.items():
         p = out_dir / f"master_dark_full_{exp:g}.npy"
         np.save(p, (s / cnt[exp] - black).astype(np.float32))
