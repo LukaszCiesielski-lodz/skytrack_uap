@@ -97,7 +97,7 @@ def train(a: np.ndarray, b: np.ndarray, *, steps: int, patch: int, batch: int, l
         scaler.update()
         sched.step()
         if (step + 1) % max(steps // 5, 1) == 0:
-            log.info("Noise2Noise: krok %d/%d, strata %.3f (%.0f s)", step + 1, steps, float(loss),
+            log.info("Noise2Noise: krok %d/%d, strata %.3f (%.0f s)", step + 1, steps, loss.item(),
                      time.perf_counter() - t0)
     return net.eval()
 
