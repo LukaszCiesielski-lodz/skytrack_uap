@@ -47,7 +47,7 @@ def _dark_raw(path: str) -> tuple[float, np.ndarray]:
 
     exp = float(read_raf_exif(Path(path))["exposure_s"] or 0.0)
     with rawpy.imread(path) as r:
-        return exp, r.raw_image_visible.astype(np.float32)
+        return exp, r.raw_image.astype(np.float32)          # cała matryca: marginesy „widoczne” bywają różne
 
 
 def master_darks(folder: Path, out_dir: Path, workers: int) -> dict[float, Path]:
@@ -60,14 +60,14 @@ def master_darks(folder: Path, out_dir: Path, workers: int) -> dict[float, Path]
     from .raw import list_photos
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    have = {float(p.stem.split("_")[-1]): p for p in out_dir.glob("master_dark_*.npy")}
+    have = {float(p.stem.split("_")[-1]): p for p in out_dir.glob("master_dark_full_*.npy")}
     if have:
         return have
     files = list_photos(folder, (".raf",))
     if not files:
         return {}
     with rawpy.imread(str(files[0])) as r:
-        black = np.asarray(r.black_level_per_channel, np.float32)[r.raw_colors_visible]
+        black = np.asarray(r.black_level_per_channel, np.float32)[r.raw_colors]
     sums: dict[float, np.ndarray] = {}
     cnt: dict[float, int] = {}
     with cf.ProcessPoolExecutor(max_workers=workers, mp_context=mp.get_context("spawn")) as ex:
@@ -75,7 +75,7 @@ def master_darks(folder: Path, out_dir: Path, workers: int) -> dict[float, Path]
             sums[exp] = sums.get(exp, 0) + raw
             cnt[exp] = cnt.get(exp, 0) + 1
     for exp, s in sums.items():
-        p = out_dir / f"master_dark_{exp:g}.npy"
+        p = out_dir / f"master_dark_full_{exp:g}.npy"
         np.save(p, (s / cnt[exp] - black).astype(np.float32))
         have[exp] = p
         log.info("master dark %g s: %d klatek → %s", exp, cnt[exp], p.name)
@@ -89,8 +89,9 @@ def _decode_full(path: str, dark: str | None, cache: str | None):
     with rawpy.imread(path) as r:
         if dark:
             d = np.load(dark)
-            vis = r.raw_image_visible
-            vis[:] = np.clip(vis.astype(np.float32) - d, 0, 65535).astype(np.uint16)
+            raw = r.raw_image                                 # cała matryca (jak master dark)
+            if d.shape == raw.shape:
+                raw[:] = np.clip(raw.astype(np.float32) - d, 0, 65535).astype(np.uint16)
         rgb = r.postprocess(use_camera_wb=True, no_auto_bright=True, output_bps=16, gamma=(1, 1), user_flip=0,
                             output_color=rawpy.ColorSpace.sRGB)
     if cache:
@@ -436,6 +437,16 @@ def run(folder: Path, cfg: dict, out_root: Path, dark_dir: Path | None = None) -
         hits = [p for e, p in dark_map.items() if abs(e - t) <= 0.02 * t]
         return str(hits[0]) if hits else None
 
+    if dark_map:                                          # rozmiar matrycy darków = zdjęć?
+        import rawpy
+
+        first = next(p for p in sorted(folder.iterdir()) if p.suffix.lower() == ".raf")
+        with rawpy.imread(str(first)) as r:
+            shape = r.raw_image.shape
+        bad = [e for e, p in dark_map.items() if np.load(p, mmap_mode="r").shape != shape]
+        if bad:
+            log.warning("[%s] darki %s mają inny rozmiar matrycy niż zdjęcia %s — pomijam je", folder.name, bad, shape)
+            dark_map = {e: p for e, p in dark_map.items() if e not in bad}
     for c in classes:
         log.info("[%s] %s: %d zdjęć po %g s, dark: %s", folder.name, c, int((ph["ev"] == c).sum()), exposures[c],
                  Path(dark_for(exposures[c])).name if dark_for(exposures[c]) else "BRAK")
