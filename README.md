@@ -99,16 +99,26 @@ Zamiast wideo można przetwarzać serie zdjęć RAW (Fujifilm RAF) z bracketingi
   - [colab/run_photos.ipynb](colab/run_photos.ipynb): sesje po kolei („Uruchom wszystko”). Lista sesji jest w `SESSIONS`, a ostatnia komórka pokazuje podsumowanie i strony raportu.
   - [colab/astrophoto.ipynb](colab/astrophoto.ipynb): zdjęcie astronomiczne.
 
-Pierwsze wyniki F2 (dwie sesje z jednej nocy, po ~900 zdjęć):
+Pierwsze wyniki F2. Sesje s1 i s2 pochodzą z jednej nocy i mają po ~900 zdjęć. Sesja s3 jest z innej nocy: 1800 zdjęć, 3.10.2026, 19:11–19:54 UTC.
 
-| | `s1_kasjopeja_0210` | `s2_deneb_0210` |
-|---|---|---|
-| Poprawka zegara | Δ = −3,15 ± 0,03 s, zgodna dla 13 satelitów | Δ = −3,08 ± 0,03 s, zgodna dla 10 satelitów |
-| Zidentyfikowane satelity | 18 | 11 |
+| | `s1_kasjopeja_0210` | `s2_deneb_0210` | `s3_deneb_0410` |
+|---|---|---|---|
+| Poprawka zegara | Δ = −3,15 ± 0,03 s, zgodna dla 13 satelitów | Δ = −3,08 ± 0,03 s, zgodna dla 10 satelitów | Δ = −5,03 ± 0,05 s, zgodna dla 13 torów |
+| Zidentyfikowane satelity | 18 | 11 | 14 (13 z pewnością `high`) |
+| Przerwa między zdjęciami serii | – | – | g = 0,077 ± 0,003 s, residua końców kresek 11 ms |
+| Kontrola czasu na satelitach | – | – | residua czasu końców 21 ms, odczyt migawki elektronicznej 0,047 ± 0,007 s |
 
-Obie sesje dają to samo Δ z dokładnością do 0,07 s, a tak powinno być, bo to ten sam zegar aparatu.
+- s1 i s2 dają to samo Δ z dokładnością do 0,07 s. Tak powinno być, bo to ten sam zegar aparatu.
+- W s3 zegar aparatu był o ~2 s dalej do przodu niż w s1 i s2. Dokładność tego porównania to ±0,5 s, bo w s3 rytm serii był nieregularny.
+- W s3 tory zidentyfikowanych satelitów leżą zwykle 20–40″ od predykcji. Paralaksa satelitów zgadza się z wpisanym miejscem obserwacji z dokładnością do ~10 m.
+- Wśród zidentyfikowanych obiektów s3 są człony rakiet sprzed 50 lat, np. DIAMANT B-P4 R/B (NORAD 7647).
 
 Lekcja z s2: pierwsza wersja detektora znalazła ~1700 „kresek” z samego szumu. Szum po wyrównaniu zdjęć jest skorelowany między sąsiednimi pikselami, a stary wzór zawyżał przez to S/N 2–3×. Dlatego S/N liczy się teraz z pasów kontrolnych obok kreski. Kreska musi też przekraczać 2σ w każdej tercji długości, a jej końce muszą być rozmyte jak gwiazdy.
+
+Efekt w s3:
+- 14 satelitów i 4 kandydatów na meteory;
+- 27 pojedynczych krótkich kresek;
+- ani jednego przypadkowego łańcucha dwóch kresek.
 
 ### Zdjęcie astronomiczne (`skyhunt astrophoto`)
 
