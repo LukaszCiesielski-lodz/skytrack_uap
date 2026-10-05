@@ -1,5 +1,15 @@
 # CHANGELOG
 
+## Dokumentacja F2 i zdjęcia astronomicznego — 2026-10-05
+
+- README (PL i EN):
+  - status zdjęć RAW (F1–F2) i zdjęcia astronomicznego;
+  - pierwsze wyniki F2 (s1, s2: Δ zgodne do 0,07 s, 18 i 11 satelitów) i lekcja o fałszywych kreskach;
+  - wynik M31 (aberracja chromatyczna, Noise2Noise, PSF) i rady do następnej sesji;
+  - zasada „jedna sesja = jedno pole”;
+  - odcisk folderu sesji, notebooki zdjęć, polecenie `skyhunt astrophoto`.
+- Notebook `run_photos`: podsumowanie znosi brakujące wartości czasu.
+
 ## Zdjęcie astronomiczne z sesji RAW; poprawki F2 — 2026-10-04
 
 - **`skyhunt astrophoto <sesja>`** i notebook `colab/astrophoto.ipynb`. Kroki:

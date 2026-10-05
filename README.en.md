@@ -12,6 +12,8 @@ The code is open (MIT license): use it, change it, build on it. **I have one req
 
 A pipeline for detecting **all** moving objects in 4K sky video, including those at the edge of the noise. Every object is measured and then, where possible, explained: satellite (TLE, NORAD ID), meteor, aircraft, or a nearby object (bird, bat, insect). Only what remains after rejecting the known classes is flagged as an anomaly, and only by criteria frozen before the analysis.
 
+Besides video, the pipeline processes RAW photo series. It measures satellite streaks in them, with the time of both ends, and builds an astrophotograph with all moving objects removed from the same session.
+
 Full specification: [docs/HANDOFF_skyhunt.md](docs/HANDOFF_skyhunt.md) (in Polish). CPU baseline (results reference only): [baseline/skytracks.py](baseline/skytracks.py).
 
 ## Status
@@ -20,6 +22,9 @@ Full specification: [docs/HANDOFF_skyhunt.md](docs/HANDOFF_skyhunt.md) (in Polis
 |---|---|---|
 | M0 | repo, config, Colab notebook, GPU decoding with benchmarks, manifest and resuming | works on Colab (L4) |
 | Report | per-frame detector, tracks, plate solve, time sync from satellites, NORAD, PDFs with constellations and clips | works; first results below |
+| RAW photos (F1–F2) | astrometry, deep stack, streaks, streak chains, gap between photos from geometry, time from satellites, NORAD, aircraft | works; [results below](#raw-photo-sessions) |
+| Astrophotograph | stack without moving objects, darks, HDR, background and vignetting, Noise2Noise, deconvolution | works; [M31 below](#astrophotograph-skyhunt-astrophoto) |
+| F3–F4 | brightness and glints along the streak, streak color; asteroids in the photo stack | – |
 | M3 | GPU shift-and-stack (faint objects), FAR from shuffling, injection–recovery | – |
 | M4 | non-linear tracks, distance from defocus blur, biological classes, meteors, aircraft (ADS-B) | – |
 | M5 | anomaly scoring | – |
@@ -75,15 +80,35 @@ Hints (hypotheses, always with numbers):
 
 **Camera settings for color:** fixed white balance (daylight or 5500 K, not auto), Standard/Provia film simulation without Color Chrome, **Color +4** (boosts chroma before H.264 crushes it; the star calibration takes it into account). Bright objects are saturated and have no color; the PDF states how many frames were rejected. Black-and-white recordings are detected and skipped.
 
-### RAW photo sessions (in development)
+### RAW photo sessions
 
-Instead of video you can process RAW photo series (Fujifilm RAF) with AE bracketing: **one subfolder in `raw/` = one session** (e.g. `raw/deneb_0210/`), results in `out/<folder>/`. Dark: a folder with "dark" in its name. The observing site and hint star are entered in the "Nagrania" cell under the folder name.
-- **Done (F1):** EXIF and sequence number (Fuji MakerNote), intervalometer cadence from whole-second EXIF times, plate solving, a deep stack of each exposure class (0, +1, −1 EV) aligned for sky rotation, a report with the map and the session timeline.
-- **Done (F2, being verified on sessions):** streaks on the difference between a photo and neighbouring photos of the same exposure class (`streaks`), chains of streaks of one object across consecutive photos and the gap between photos of a set measured from geometry alone (`link`), clock correction Δ from satellites and NORAD IDs (`identify`), aircraft from ADS-B; the report shows tracks on the map, a timing page, an object table and a page per object with cut-outs from consecutive photos; IOD positions use streak end times.
+Instead of video you can process RAW photo series (Fujifilm RAF) with AE bracketing: **one subfolder in `raw/` = one session** (e.g. `raw/s2_deneb_0210/`), results in `out/<folder>/`. Dark: a folder with "dark" in its name. The observing site and hint star are kept in `MyDrive/skyhunt/sites.yaml` under the folder name (outside the repo). The notebook copies the site from an earlier session if the new one has no entry.
+- **F1:** EXIF and sequence number (Fuji MakerNote), intervalometer cadence from whole-second EXIF times, plate solving, a deep stack of each exposure class (0, +1, −1 EV) aligned for sky rotation, a report with the map and the session timeline.
+- **F2:**
+  - `streaks`: streaks on the difference between a photo and neighbouring photos of the same exposure class. S/N is computed from control bands next to the streak, because the noise after alignment is correlated. Streak ends come from a profile fit.
+  - `link`: chains of streaks of one object across consecutive photos, including across a missing set. The gap between photos of a set is measured from geometry alone.
+  - `identify`: clock correction Δ from satellites, and NORAD IDs. The timing model is checked on the identified satellites.
+  - Aircraft from ADS-B.
+  - Report: tracks on the map, a timing page, an object table and a page per object with cut-outs from consecutive photos. Short objects are on a separate diagnostic page.
+  - IOD positions use streak end times.
 - **Next stages:** brightness and glints along the streak, color (F3), asteroids in the stack (F4).
 - **Camera settings (X-E3):** M, f/1.0, ISO 800, electronic shutter, RAW only (lossless compressed), DR100, WB 5600 K, AE BKT ±1 EV (1/2 s, 1 s, 1/4 s), long-exposure NR off, intervalometer.
+- **One session = one sky field.** A few photos of another field in the folder break the astrometry of the whole session: epoch agreement (`epoch_rms_px` in `skyhunt status`) jumps to thousands of pixels and no streaks are found. After files are added or removed, the pipeline recomputes the session from scratch by itself.
 - File diagnostics before the first session: [colab/raw_diagnostics.ipynb](colab/raw_diagnostics.ipynb).
-- **Notebooks:** [colab/run_photos.ipynb](colab/run_photos.ipynb) — sessions one after another (Run all); [colab/astrophoto.ipynb](colab/astrophoto.ipynb) — astrophotograph.
+- **Notebooks:**
+  - [colab/run_photos.ipynb](colab/run_photos.ipynb): sessions one after another (Run all). The session list is in `SESSIONS`, and the last cell shows a summary and the report pages.
+  - [colab/astrophoto.ipynb](colab/astrophoto.ipynb): astrophotograph.
+
+First F2 results (two sessions from one night, ~900 photos each):
+
+| | `s1_kasjopeja_0210` | `s2_deneb_0210` |
+|---|---|---|
+| Clock correction | Δ = −3.15 ± 0.03 s, consistent across 13 satellites | Δ = −3.08 ± 0.03 s, consistent across 10 satellites |
+| Identified satellites | 18 | 11 |
+
+Both sessions give the same Δ to within 0.07 s, which is what it should be, since it is the same camera clock.
+
+Lesson from s2: the first version of the detector found ~1700 "streaks" made of pure noise. After alignment the noise is correlated between neighbouring pixels, and the old formula inflated S/N by 2–3× as a result. That is why S/N is now computed from control bands next to the streak. A streak must also exceed 2σ in each third of its length, and its ends must be blurred like stars.
 
 ### Astrophotograph (`skyhunt astrophoto`)
 
@@ -94,8 +119,33 @@ The inverse of streak hunting: one full-resolution sky image from a RAW session,
 - Background: block medians without stars and without known large objects (M31, M33, M42, M45, NGC 7000…; placed via astrometry); the background shape is used as the f/1.0 vignetting (no flats).
 - Color: the median field-star color is set to white; colour-preserving asinh stretch, chroma denoising.
 - Lateral chromatic aberration measured on stars (R and B scale vs G) and corrected; the frame is cropped to the area covered by all photos; stars are less saturated than the galaxy.
-- Variants: `_n2n` — **Noise2Noise** (a PyTorch U-Net trained on two half-stacks of the same session: nothing is invented), `_n2n_deconv` — plus **Richardson–Lucy deconvolution** with the PSF measured on stars in 2×3 tiles. The HDR stack is saved, so later runs only reprocess it (`--restack` rebuilds it).
-- For a showcase image: 2–3 s per frame (50 mm on a tripod), ISO 800–1600, 300–600 frames, darks and flats.
+- Variants:
+  - `_n2n`: **Noise2Noise**, a PyTorch U-Net trained on two half-stacks of the same session (even and odd photos). The network invents nothing, because it only learns what both halves have in common.
+  - `_n2n_deconv`: additionally, **Richardson–Lucy deconvolution** with the PSF measured on stars in 2×3 tiles of the frame.
+- The HDR stack is saved, so later runs only reprocess it (a few minutes). `--restack` rebuilds the stack.
+- The first cell of [colab/astrophoto.ipynb](colab/astrophoto.ipynb) holds:
+  - `SESSION`: the session folder;
+  - `HINT_STAR`: a bright star in the frame;
+  - `DARK`: the darks folder;
+  - `RESTACK`.
+
+  Results can go to a separate folder (`OUT`, e.g. `out_astro`).
+
+First result: **M31**, `m31_0310` (~150 bracketed photos, 50 mm f/1.0, object at the centre of the frame).
+
+| | |
+|---|---|
+| Chromatic aberration at the corner | R +0.45 px, B −0.46 px relative to G, corrected |
+| Noise2Noise | background noise 6.8× lower |
+| PSF (deconvolution) | FWHM 6.0–6.6 px across the whole frame: the blur came from focus, not from the lens |
+
+For a better image:
+- focus with a Bahtinov mask or on a magnified live view of a bright star;
+- aperture f/1.4–2 (less coma and aberration in the corners);
+- 2–3 s per frame (50 mm on a tripod), ISO 800–1600;
+- 300–600 frames;
+- darks and flats;
+- a darker sky (the background model removes sky glow, but its noise remains).
 
 ### Asteroids, comets and NEOs
 
@@ -205,14 +255,17 @@ For each new observation:
 
 Do not save the notebook with coordinates filled in back to a public repo.
 
+RAW photo sessions have their own notebooks: [colab/run_photos.ipynb](colab/run_photos.ipynb) for detection and [colab/astrophoto.ipynb](colab/astrophoto.ipynb) for the image. Both run with Run all.
+
 CLI:
 
 ```bash
 skyhunt probe RAW_DIR                      # metadata + initial time (no writes)
 skyhunt bench-decode FILE --out OUT/_bench # decoding backend throughput
-skyhunt run [RAW_DIR] [--out OUT]          # pipeline with resuming
+skyhunt run [RAW_DIR] [--out OUT]          # pipeline with resuming (a video file or a photo session folder)
 skyhunt run FILE --stages stack --force stack
 skyhunt status [RAW_DIR]                   # stage status from manifests
+skyhunt astrophoto RAW_DIR/SESSION [--out OUT] [--dark DARK_DIR] [--restack]  # astrophotograph
 ```
 
 Every command accepts `--config` and any number of `--set key=value`, e.g. `--set decode.batch_frames=16`.
@@ -223,6 +276,7 @@ Every command accepts `--config` and any number of `--set key=value`, e.g. `--se
 - Each stage declares which config sections it depends on. Its hash is computed from those sections, the stage's `rev` number and the hashes of the required stages.
 - The per-file `manifest.json` records for each stage: status, hash, code version (including the git commit), timings, output files and metrics. A stage is skipped if it has status `done` with the same hash and its files exist.
 - A config change recomputes only the dependent stages. A change to a stage's logic requires bumping `rev`.
+- A photo session has a folder fingerprint: the number of files, their sizes and the list of names. When the folder content changes, the manifest starts over.
 - All JSON writes are atomic (temporary file + `os.replace`), so an interruption does not corrupt the manifest.
 
 ## Decoding

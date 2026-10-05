@@ -12,6 +12,8 @@ Kod jest otwarty (licencja MIT): używaj go, zmieniaj, rozwijaj. **Mam jedną pr
 
 Pipeline do wykrywania **wszystkich** obiektów ruchomych na wideo nieba 4K, także tych na granicy szumu. Każdy obiekt jest mierzony, a potem, jeśli się da, wyjaśniany: satelita (TLE, NORAD ID), meteor, samolot albo bliski obiekt (ptak, nietoperz, owad). Jako anomalię oznaczamy tylko to, co zostaje po odrzuceniu znanych klas, i to według kryteriów zamrożonych przed analizą.
 
+Oprócz wideo pipeline przetwarza serie zdjęć RAW. Z nich mierzy kreski satelitów z czasem obu końców, a z tej samej sesji składa zdjęcie astronomiczne bez ruchomych obiektów.
+
 Pełna specyfikacja: [docs/HANDOFF_skyhunt.md](docs/HANDOFF_skyhunt.md). Baseline CPU (tylko referencja wyników): [baseline/skytracks.py](baseline/skytracks.py).
 
 ## Status
@@ -20,6 +22,9 @@ Pełna specyfikacja: [docs/HANDOFF_skyhunt.md](docs/HANDOFF_skyhunt.md). Baselin
 |---|---|---|
 | M0 | repo, config, notebook Colab, dekodowanie GPU z pomiarem, manifest i wznawianie | działa na Colab (L4) |
 | Raport | detektor per klatka, tory, plate solve, synchronizacja czasu po satelitach, NORAD, PDF z konstelacjami i wycinkami | działa; pierwsze wyniki niżej |
+| Zdjęcia RAW (F1–F2) | astrometria, głęboki stos, kreski, łańcuchy kresek, przerwa między zdjęciami z geometrii, czas z satelitów, NORAD, samoloty | działa; [wyniki niżej](#sesje-zdjęć-raw) |
+| Zdjęcie astronomiczne | stos bez ruchomych obiektów, darki, HDR, tło i winietowanie, Noise2Noise, dekonwolucja | działa; [M31 niżej](#zdjęcie-astronomiczne-skyhunt-astrophoto) |
+| F3–F4 | jasność i błyski wzdłuż kreski, kolor kresek; planetoidy na stosie zdjęć | – |
 | M3 | shift-and-stack na GPU (słabe obiekty), FAR z tasowania, injection–recovery | – |
 | M4 | tory nieliniowe, odległość z rozmycia, klasy biologiczne, meteory, samoloty (ADS-B) | – |
 | M5 | scoring anomalii | – |
@@ -75,15 +80,35 @@ Podpowiedzi (hipotezy, zawsze z liczbami):
 
 **Ustawienia aparatu do koloru:** stały balans bieli (światło dzienne albo 5500 K, nie auto), symulacja Standard/Provia bez Color Chrome, **Kolor +4** (wzmacnia chromę, zanim H.264 ją zgniecie; kalibracja na gwiazdach to przelicza). Jasne obiekty są prześwietlone i nie mają koloru; PDF podaje, ile klatek odrzucono. Nagrania czarno-białe są wykrywane i pomijane.
 
-### Sesje zdjęć RAW (w budowie)
+### Sesje zdjęć RAW
 
-Zamiast wideo można przetwarzać serie zdjęć RAW (Fujifilm RAF) z bracketingiem AE: **jeden podfolder w `raw/` = jedna sesja** (np. `raw/deneb_0210/`), wyniki w `out/<folder>/`. Dark: folder z „dark” w nazwie. Miejsce obserwacji i gwiazdę-podpowiedź wpisuje się w komórce „Nagrania” pod nazwą folderu.
-- **Gotowe (F1):** EXIF i numer w serii (MakerNote Fuji), rytm interwałometru z pełnych sekund EXIF, plate solve, głęboki stos każdej klasy jasności (0, +1, −1 EV) wyrównany do obrotu nieba, raport z mapą i przebiegiem sesji.
-- **Gotowe (F2, do sprawdzenia na sesjach):** kreski na różnicy zdjęcia z sąsiednimi zdjęciami tej samej klasy jasności (`streaks`), łańcuchy kresek jednego obiektu przez kolejne zdjęcia i pomiar przerwy między zdjęciami serii z samej geometrii (`link`), poprawka zegara Δ z satelitów i NORAD (`identify`), samoloty z ADS-B, w raporcie tory na mapie, strona czasu, tabela obiektów i strona każdego obiektu z wycinkami kolejnych zdjęć, pozycje IOD z czasem końców kresek.
+Zamiast wideo można przetwarzać serie zdjęć RAW (Fujifilm RAF) z bracketingiem AE: **jeden podfolder w `raw/` = jedna sesja** (np. `raw/s2_deneb_0210/`), wyniki w `out/<folder>/`. Dark: folder z „dark” w nazwie. Miejsce obserwacji i gwiazda-podpowiedź są w `MyDrive/skyhunt/sites.yaml` pod nazwą folderu (poza repo). Notebook kopiuje miejsce z wcześniejszej sesji, jeśli nowa nie ma wpisu.
+- **F1:** EXIF i numer w serii (MakerNote Fuji), rytm interwałometru z pełnych sekund EXIF, plate solve, głęboki stos każdej klasy jasności (0, +1, −1 EV) wyrównany do obrotu nieba, raport z mapą i przebiegiem sesji.
+- **F2:**
+  - `streaks`: kreski na różnicy zdjęcia z sąsiednimi zdjęciami tej samej klasy jasności. S/N jest liczone z pasów kontrolnych obok kreski, bo szum po wyrównaniu jest skorelowany. Końce kresek wynikają z dopasowania profilu.
+  - `link`: łańcuchy kresek jednego obiektu przez kolejne zdjęcia, także przez brakującą serię. Przerwa między zdjęciami serii jest mierzona z samej geometrii.
+  - `identify`: poprawka zegara Δ z satelitów i numery NORAD. Kontrola modelu czasu na zidentyfikowanych satelitach.
+  - Samoloty z ADS-B.
+  - Raport: tory na mapie, strona czasu, tabela obiektów i strona każdego obiektu z wycinkami kolejnych zdjęć. Krótkie obiekty są na osobnej stronie diagnostycznej.
+  - Pozycje IOD z czasem końców kresek.
 - **W kolejnych etapach:** jasność i błyski wzdłuż kreski, kolor (F3), planetoidy na stosie (F4).
 - **Ustawienia aparatu (X-E3):** M, f/1.0, ISO 800, migawka elektroniczna, tylko RAW (kompresja bezstratna), DR100, WB 5600 K, AE BKT ±1 EV (1/2 s, 1 s, 1/4 s), redukcja szumów długich czasów wyłączona, interwałometr.
+- **Jedna sesja = jedno pole nieba.** Kilka zdjęć innego kadru w folderze psuje astrometrię całej sesji: zgodność epok (`epoch_rms_px` w `skyhunt status`) skacze do tysięcy pikseli, a kresek jest zero. Po dodaniu albo usunięciu plików pipeline sam liczy sesję od nowa.
 - Diagnostyka plików przed pierwszą sesją: [colab/raw_diagnostics.ipynb](colab/raw_diagnostics.ipynb).
-- **Notebooki:** [colab/run_photos.ipynb](colab/run_photos.ipynb) — sesje po kolei (Uruchom wszystko); [colab/astrophoto.ipynb](colab/astrophoto.ipynb) — zdjęcie astronomiczne.
+- **Notebooki:**
+  - [colab/run_photos.ipynb](colab/run_photos.ipynb): sesje po kolei („Uruchom wszystko”). Lista sesji jest w `SESSIONS`, a ostatnia komórka pokazuje podsumowanie i strony raportu.
+  - [colab/astrophoto.ipynb](colab/astrophoto.ipynb): zdjęcie astronomiczne.
+
+Pierwsze wyniki F2 (dwie sesje z jednej nocy, po ~900 zdjęć):
+
+| | `s1_kasjopeja_0210` | `s2_deneb_0210` |
+|---|---|---|
+| Poprawka zegara | Δ = −3,15 ± 0,03 s, zgodna dla 13 satelitów | Δ = −3,08 ± 0,03 s, zgodna dla 10 satelitów |
+| Zidentyfikowane satelity | 18 | 11 |
+
+Obie sesje dają to samo Δ z dokładnością do 0,07 s, a tak powinno być, bo to ten sam zegar aparatu.
+
+Lekcja z s2: pierwsza wersja detektora znalazła ~1700 „kresek” z samego szumu. Szum po wyrównaniu zdjęć jest skorelowany między sąsiednimi pikselami, a stary wzór zawyżał przez to S/N 2–3×. Dlatego S/N liczy się teraz z pasów kontrolnych obok kreski. Kreska musi też przekraczać 2σ w każdej tercji długości, a jej końce muszą być rozmyte jak gwiazdy.
 
 ### Zdjęcie astronomiczne (`skyhunt astrophoto`)
 
@@ -94,8 +119,33 @@ Odwrotność szukania kresek: z sesji RAW powstaje jedno zdjęcie nieba w pełne
 - Tło: mediana bloków bez gwiazd i bez znanych dużych obiektów (M31, M33, M42, M45, NGC 7000…; położenie z astrometrii), kształt tła = winietowanie f/1.0 (bez flatów).
 - Kolor: mediana kolorów gwiazd pola = biel; rozciągnięcie asinh z zachowaniem koloru, odszumienie chromy.
 - Aberracja chromatyczna poprzeczna mierzona na gwiazdach (skala R i B względem G) i korygowana; kadr przycięty do obszaru wspólnego wszystkich zdjęć; gwiazdy mniej nasycone niż galaktyka.
-- Warianty: `_n2n` — **Noise2Noise** (U-Net w PyTorch uczony na dwóch połówkach stosu tej samej sesji: niczego nie dorysowuje), `_n2n_deconv` — dodatkowo **dekonwolucja Richardsona–Lucy** z PSF zmierzonym na gwiazdach w 2×3 kafelkach kadru. Stos HDR jest zapisywany: kolejne uruchomienia to sama obróbka (`--restack` liczy od nowa).
-- Pod ładne zdjęcie: 2–3 s na klatkę (50 mm na statywie), ISO 800–1600, 300–600 zdjęć, darki i flaty.
+- Warianty:
+  - `_n2n`: **Noise2Noise**, czyli U-Net w PyTorch uczony na dwóch połówkach stosu tej samej sesji (zdjęcia parzyste i nieparzyste). Sieć niczego nie dorysowuje, bo uczy się tylko tego, co obie połówki mają wspólne.
+  - `_n2n_deconv`: dodatkowo **dekonwolucja Richardsona–Lucy** z PSF zmierzonym na gwiazdach w 2×3 kafelkach kadru.
+- Stos HDR jest zapisywany, więc kolejne uruchomienia to sama obróbka (kilka minut). `--restack` liczy stos od nowa.
+- Notebook [colab/astrophoto.ipynb](colab/astrophoto.ipynb) ma w pierwszej komórce:
+  - `SESSION`: folder sesji;
+  - `HINT_STAR`: jasna gwiazda w kadrze;
+  - `DARK`: folder darków;
+  - `RESTACK`.
+
+  Wyniki można kierować do osobnego folderu (`OUT`, np. `out_astro`).
+
+Pierwszy wynik: **M31**, `m31_0310` (~150 zdjęć z bracketingiem, 50 mm f/1.0, obiekt na środku kadru).
+
+| | |
+|---|---|
+| Aberracja chromatyczna w rogu | R +0,45 px, B −0,46 px względem G, skorygowana |
+| Noise2Noise | szum tła 6,8× mniejszy |
+| PSF (dekonwolucja) | FWHM 6,0–6,6 px w całym kadrze: rozmycie dawała ostrość, a nie obiektyw |
+
+Pod lepsze zdjęcie:
+- ostrość ustawiona maską Bahtinova albo na powiększonym podglądzie jasnej gwiazdy;
+- przysłona f/1.4–2 (mniej komy i aberracji w rogach);
+- 2–3 s na klatkę (50 mm na statywie), ISO 800–1600;
+- 300–600 zdjęć;
+- darki i flaty;
+- ciemniejsze niebo (łunę model tła usuwa, ale jej szum zostaje).
 
 ### Planetoidy, komety i NEO
 
@@ -205,14 +255,17 @@ Przy każdej nowej obserwacji:
 
 Nie zapisuj notebooka z wpisanymi współrzędnymi z powrotem do publicznego repo.
 
+Sesje zdjęć RAW mają własne notebooki: [colab/run_photos.ipynb](colab/run_photos.ipynb) do detekcji i [colab/astrophoto.ipynb](colab/astrophoto.ipynb) do zdjęcia. Oba działają przez „Uruchom wszystko”.
+
 CLI:
 
 ```bash
 skyhunt probe RAW_DIR                      # metadane + wstępny czas (bez zapisu)
 skyhunt bench-decode PLIK --out OUT/_bench # przepustowość backendów dekodowania
-skyhunt run [RAW_DIR] [--out OUT]          # pipeline ze wznawianiem
+skyhunt run [RAW_DIR] [--out OUT]          # pipeline ze wznawianiem (plik wideo albo folder sesji zdjęć)
 skyhunt run PLIK --stages stack --force stack
 skyhunt status [RAW_DIR]                   # stan etapów z manifestów
+skyhunt astrophoto RAW_DIR/SESJA [--out OUT] [--dark DARK_DIR] [--restack]  # zdjęcie astronomiczne
 ```
 
 Każde polecenie przyjmuje `--config` oraz dowolną liczbę `--set klucz=wartość`, np. `--set decode.batch_frames=16`.
@@ -223,6 +276,7 @@ Każde polecenie przyjmuje `--config` oraz dowolną liczbę `--set klucz=wartoś
 - Każdy etap deklaruje, od których sekcji configu zależy. Jego hash liczy się z tych sekcji, z numeru `rev` etapu i z hashy etapów wymaganych.
 - `manifest.json` per plik zapisuje dla każdego etapu: status, hash, wersję kodu (w tym commit git), czasy, pliki wynikowe i metryki. Etap jest pomijany, jeśli ma status `done` z tym samym hashem i jego pliki istnieją.
 - Zmiana configu przelicza tylko zależne etapy. Zmiana logiki etapu wymaga podbicia `rev`.
+- Sesja zdjęć ma odcisk folderu: liczbę plików, ich rozmiary i listę nazw. Gdy zawartość folderu się zmieni, manifest zaczyna się od nowa.
 - Wszystkie zapisy JSON są atomowe (plik tymczasowy + `os.replace`), więc przerwanie w trakcie nie psuje manifestu.
 
 ## Dekodowanie
