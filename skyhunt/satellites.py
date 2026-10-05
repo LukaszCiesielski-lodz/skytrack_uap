@@ -449,6 +449,9 @@ class Match:
     confidence: str = ""
     reason: str = ""
     ambiguous_with: list = field(default_factory=list)
+    light: str | None = None            # oświetlenie wzdłuż toru (zdjęcia): ``light_state``
+    shadow_tau: float | None = None     # chwila przejścia przez granicę cienia [τ toru]
+    same_norad_as: list = field(default_factory=list)   # inne tory dopasowane do tego samego obiektu
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -771,3 +774,53 @@ def sunlit_flags(catalog: Catalog, matches: list, observer: Observer, ephemeris_
         else:
             m.sunlit = f
     return eph
+
+
+def light_state(flags: list) -> str | None:
+    """Oświetlenie toru z flag ``sunlit`` na początku, w środku i na końcu (None = brak efemerydy)."""
+    if not flags or any(f is None for f in flags):
+        return None
+    if all(flags):
+        return "oświetlony"
+    if not any(flags):
+        return "w cieniu"
+    if flags[0] and not flags[-1]:
+        return "wchodzi w cień"
+    if flags[-1] and not flags[0]:
+        return "wychodzi z cienia"
+    return "na granicy cienia"
+
+
+def track_light(catalog: Catalog, m: Match, track: TrackSky, observer: Observer, eph, iters: int = 10) -> None:
+    """Uzupełnia ``light`` (stan na początku, w środku i na końcu toru) i ``shadow_tau`` (granica
+    cienia, bisekcja do ~1/1000 długości toru). ``sunlit`` zostaje ze środka toru."""
+    if eph is None:
+        return
+    taus = [float(track.tau[0]), float(track.tau_mid), float(track.tau[-1])]
+    flags = sunlit_at(catalog, [m.cat_index] * 3, [m.delta_s + t for t in taus], observer, eph)
+    m.light = light_state(flags)
+    if m.light in ("wchodzi w cień", "wychodzi z cienia"):
+        lo, hi = (taus[0], taus[1]) if flags[0] != flags[1] else (taus[1], taus[2])
+        f_lo = flags[0] if flags[0] != flags[1] else flags[1]
+        for _ in range(iters):
+            mid = 0.5 * (lo + hi)
+            if sunlit_at(catalog, [m.cat_index], [m.delta_s + mid], observer, eph)[0] == f_lo:
+                lo = mid
+            else:
+                hi = mid
+        m.shadow_tau = 0.5 * (lo + hi)
+
+
+def point_residuals(observer: Observer, catalog: Catalog, m: Match, track: TrackSky) -> tuple[np.ndarray, np.ndarray]:
+    """Residua każdego punktu toru względem satelity: w poprzek toru satelity [″] i wzdłuż [s]
+    (dodatnie = punkt jest dalej na torze, niż satelita w tej chwili)."""
+    u = observer.topocentric([catalog.satrecs[m.cat_index]], m.delta_s + track.tau)["unit"][0]
+    nan = np.full(len(track.tau), np.nan)
+    ok = np.isfinite(u).all(axis=1)
+    if ok.sum() < 2:
+        return nan, nan
+    sgc = fit_great_circle(u[ok], track.tau[ok] - track.tau_mid)
+    cross = sgc.cross_offset_deg(track.vec) * 3600.0
+    d = np.angle(np.exp(1j * (sgc.phase(track.vec) - sgc.phase(np.where(ok[:, None], u, track.vec)))))
+    along = np.where(ok, d / sgc.omega_rad_s, np.nan) if sgc.omega_rad_s > 0 else nan
+    return cross, along

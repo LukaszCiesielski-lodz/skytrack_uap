@@ -88,11 +88,16 @@ Instead of video you can process RAW photo series (Fujifilm RAF) with AE bracket
   - `streaks`: streaks on the difference between a photo and neighbouring photos of the same exposure class. S/N is computed from control bands next to the streak, because the noise after alignment is correlated. Streak ends come from a profile fit.
   - `link`: chains of streaks of one object across consecutive photos, including across a missing set. The gap between photos of a set is measured from geometry alone.
   - `identify`: clock correction Δ from satellites, and NORAD IDs. The timing model is checked on the identified satellites.
+    - Tracks of one satellite that `link` left separate are merged. When they do not form one track, the report marks them "same NORAD as #…".
+    - Illumination is checked at the start, middle and end of the track: "sunlit", "in shadow", "entering shadow at about hh:mm:ss UTC" (the report labels are in Polish). A satellite in shadow along the whole track does not get `high` confidence.
+    - The object page shows the cross-track residual of every streak relative to the prediction.
+    - `out/clock_log.csv`: a camera clock log from all sessions (Δ, number of satellites, cadence type). The last cell of `run_photos.ipynb` computes the clock drift in s/day from it.
   - Aircraft from ADS-B.
   - Report: tracks on the map, a timing page, an object table and a page per object with cut-outs from consecutive photos. Short objects are on a separate diagnostic page.
   - IOD positions use streak end times.
 - **Next stages:** brightness and glints along the streak, color (F3), asteroids in the stack (F4).
 - **Camera settings (X-E3):** M, f/1.0, ISO 800, electronic shutter, RAW only (lossless compressed), DR100, WB 5600 K, AE BKT ±1 EV (1/2 s, 1 s, 1/4 s), long-exposure NR off, intervalometer.
+- **Set cadence.** In s3 the camera behaved as if it started each set on a whole second of its own clock, and waited one second longer when it could not keep up with writing (P = 4.012 s; s1 and s2 had a regular cadence). The report calls this "set starts on a whole second of the camera clock" and gives no ±0.5 s warning, because Δ absorbs the constant sub-second phase. The time residuals in streak chains (11 ms) confirm it.
 - **One session = one sky field.** A few photos of another field in the folder break the astrometry of the whole session: epoch agreement (`epoch_rms_px` in `skyhunt status`) jumps to thousands of pixels and no streaks are found. After files are added or removed, the pipeline recomputes the session from scratch by itself.
 - File diagnostics before the first session: [colab/raw_diagnostics.ipynb](colab/raw_diagnostics.ipynb).
 - **Notebooks:**

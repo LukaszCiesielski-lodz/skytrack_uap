@@ -111,3 +111,23 @@ def test_open_times_within_set():
     exp = [0.5, 1.0, 0.25, 0.5, 1.0, 0.25]
     t = PT.open_times(sets, exp, np.floor(np.array([100.2, 100.8, 101.9, 103.2, 103.8, 104.9])), cad, 0.1)
     assert np.allclose(t, [100.2, 100.8, 101.9, 103.2, 103.8, 104.9])
+
+
+def test_rhythm_integer_clock_with_slips():
+    """Start serii na pełnej sekundzie zegara aparatu, czasem sekunda dłużej (zapis na kartę) —
+    jak s3_deneb_0410: rytm „nieregularny” dla noniusza, ale czasy z EXIF + stała faza są dobre."""
+    d = np.full(399, 4.0)
+    d[[49, 59, 69]] += 1                                   # przeskoki przed seriami 50, 60, 70
+    t = 1000.0 + np.r_[0, np.cumsum(d)]
+    assert not PT.fit_cadence(t).regular
+    rh = PT.rhythm(t)
+    assert rh["mode"] == "integer_clock" and rh["step_s"] == 4 and rh["slip_sets"] == [50, 60, 70]
+    assert "pełnej sekundzie" in PT.rhythm_text(rh, 11.0) and "potwierdzone" in PT.rhythm_text(rh, 11.0)
+    assert "do potwierdzenia" in PT.rhythm_text(rh, None)
+
+    floors = np.floor(1000.37 + 2.973 * np.arange(120))
+    assert PT.rhythm(floors)["mode"] == "vernier"
+    rng = np.random.default_rng(3)
+    noisy = np.floor(1000.0 + np.r_[0, np.cumsum(rng.uniform(3.0, 6.0, 199))])
+    assert PT.rhythm(noisy)["mode"] == "irregular"
+    assert "NIEREGULARNY" in PT.rhythm_text(PT.rhythm(noisy))

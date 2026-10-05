@@ -36,7 +36,7 @@ def _exif_seconds(r: dict) -> float:
 def probe_session(folder: Path, cfg: dict) -> dict:
     """EXIF wszystkich zdjęć → serie, klasy jasności, rytm interwałometru, chwile otwarcia
     migawki (τ od otwarcia pierwszego zdjęcia) i czas startu a priori w UTC."""
-    from .photo_timing import Cadence, ev_class, fit_cadence, group_sets, open_times
+    from .photo_timing import Cadence, ev_class, fit_cadence, group_sets, open_times, rhythm
     from .raw import list_photos, read_raf_exif
     from .timing import camera_to_utc
 
@@ -58,12 +58,14 @@ def probe_session(folder: Path, cfg: dict) -> dict:
     exact = all(r.get("subsec") for r in rows)
     firsts = [i for i, k in enumerate(sets) if i == 0 or sets[i - 1] != k]
     exp = [float(r["exposure_s"] or 0.0) for r in rows]
+    rh = {"mode": "exif_subsec"}
     if exact:   # ułamki sekund w EXIF: czas wprost, rytm tylko informacyjnie
         p = float(np.median(np.diff(t[firsts]))) if len(firsts) > 1 else float("nan")
         cad = Cadence(float(t[0]), p, 0.005, float("nan"), False, len(firsts))
         t_open = t.copy()
     else:
         cad = fit_cadence(t[firsts])
+        rh = rhythm(t[firsts], cad)
         t_open = open_times(sets, exp, t, cad, float(pcfg["inter_frame_gap_s"]))
     t_ref = float(t_open[0])
     for r, to, e in zip(rows, t_open, exp):
@@ -80,7 +82,8 @@ def probe_session(folder: Path, cfg: dict) -> dict:
                "cadence": cad.to_dict(), "exif_subsec": exact, "iso": isos, "fnumber": fnums,
                "classes": {c: sorted(v) for c, v in sorted(classes.items())},
                "model": rows[0].get("model"), "first": rows[0]["file"], "last": rows[-1]["file"],
-               "sequence_numbers": all(r.get("sequence_number") for r in rows)}
+               "sequence_numbers": all(r.get("sequence_number") for r in rows),
+               "rhythm": rh}
     warn = []
     if len(isos) > 1:
         warn.append(f"zmienne ISO {isos} — ustaw ISO na stałe (bez Auto ISO)")
@@ -88,7 +91,7 @@ def probe_session(folder: Path, cfg: dict) -> dict:
         warn.append(f"zmienna przysłona {fnums}")
     if any(len(v) > 1 for v in classes.values()):
         warn.append("klasa jasności ma różne czasy naświetlania")
-    if not cad.regular and not exact:
+    if not exact and rh["mode"] == "irregular":
         warn.append(f"nieregularny rytm serii ({cad.n_violations} serii poza rytmem) — czas z EXIF ±0,5 s")
     session["warnings"] = warn
     prior = {"start_utc": start.isoformat(), "sigma_s": float(tcfg["prior_sigma_s"]), "source": "exif",
@@ -101,14 +104,16 @@ def probe(ctx: StageContext) -> dict:
     """Metadane zdjęć i czas a priori (EXIF + rytm serii)."""
     import pandas as pd
 
+    from .photo_timing import rhythm_text
+
     res = probe_session(ctx.input_path, ctx.cfg)
     pd.DataFrame(res["photos"]).to_csv(ctx.outdir / "photos.csv", index=False)
     ctx.write_json("meta.json", {"kind": "photos", "session": res["session"], "time_prior": res["time_prior"],
                                  "role": ctx.role})
     s, cad = res["session"], res["session"]["cadence"]
-    ctx.log.info("[%s] %d zdjęć w %d seriach, %.0f s, rytm %.4f s (T0 ±%.3f s, %s), klasy %s, ISO %s, start ≈ %s UTC",
+    ctx.log.info("[%s] %d zdjęć w %d seriach, %.0f s, rytm %.4f s (T0 ±%.3f s; %s), klasy %s, ISO %s, start ≈ %s UTC",
                  ctx.input_path.name, s["n_photos"], s["n_sets"], s["duration_s"], cad["period"],
-                 cad["t0_halfwidth"], "regularny" if cad["regular"] else "NIEREGULARNY", s["classes"], s["iso"],
+                 cad["t0_halfwidth"], rhythm_text(s["rhythm"]), s["classes"], s["iso"],
                  res["time_prior"]["start_utc"])
     for w in s["warnings"]:
         ctx.log.warning("[%s] %s", ctx.input_path.name, w)
@@ -121,6 +126,24 @@ def _photos(ctx: StageContext):
     import pandas as pd
 
     return pd.read_csv(ctx.outdir / "photos.csv")
+
+
+def session_rhythm(outdir: Path, meta: dict | None = None) -> dict:
+    """Rytm serii: z meta.json (sesje od tej wersji) albo policzony z photos.csv (starsze sesje —
+    bez przeliczania etapu probe, bo czasy otwarcia migawki się nie zmieniają)."""
+    import pandas as pd
+
+    from .io import read_json
+    from .photo_timing import rhythm
+
+    sess = (meta or read_json(outdir / "meta.json"))["session"]
+    if sess.get("rhythm"):
+        return sess["rhythm"]
+    if sess.get("exif_subsec"):
+        return {"mode": "exif_subsec"}
+    ph = pd.read_csv(outdir / "photos.csv")
+    firsts = ph[ph["set"].ne(ph["set"].shift())]
+    return rhythm(np.array([_exif_seconds({"datetime": str(d)}) for d in firsts["datetime"]]))
 
 
 # ---------------------------------------------------------------- odczyt zdjęć (równolegle)
@@ -893,9 +916,82 @@ def timing_from_satellites(observer, catalog, matches: list, skies: dict, pts, h
     return out
 
 
+def merge_same_norad(tracks: dict, skies: dict, matches: dict, pts, camera, observer, catalog, grid, delta: float,
+                     icfg: dict, lcfg: dict, log=None, name: str = ""):
+    """Ten sam obiekt w kilku torach (łańcuch porwany mocniej, niż sklei ``link``): kolejne tory
+    dopasowane z pewnością ≥ medium do tego samego NORAD, rozłączne w czasie, z przerwą
+    ≤ ``same_norad_max_gap_s``. Scalenie zostaje, gdy scalony tor nadal pasuje do tego obiektu
+    z residuum poprzecznym ≤ ``same_norad_merge_ratio`` × lepszego z części (nie mniej niż
+    ``same_norad_floor_arcsec``); inaczej oba tory dostają ``same_norad_as`` i notę. Zmienia
+    ``tracks``, ``skies``, ``matches`` w miejscu; zwraca ``pts`` z przenumerowanymi punktami."""
+    import pandas as pd
+
+    from .report import CONF_RANK
+    from .satellites import identify_tracks, make_track_sky
+
+    max_gap = float(lcfg.get("same_norad_max_gap_s", 60.0))
+    ratio = float(lcfg.get("same_norad_merge_ratio", 1.5))
+    floor_deg = float(lcfg.get("same_norad_floor_arcsec", 30.0)) / 3600.0
+    groups: dict[int, list[int]] = {}
+    for tid, ms in matches.items():
+        if ms and tid in skies and CONF_RANK.get(ms[0].confidence, 0) >= CONF_RANK["medium"]:
+            groups.setdefault(ms[0].norad, []).append(tid)
+    for norad, tids in groups.items():
+        tids.sort(key=lambda t: float(skies[t].tau[0]))
+        i = 0
+        while i < len(tids) - 1:
+            a, b = tids[i], tids[i + 1]
+            gap = float(skies[b].tau[0] - skies[a].tau[-1])
+            if gap <= 0 or gap > max_gap:
+                i += 1
+                continue
+            ma, mb = matches[a][0], matches[b][0]
+            sub = pts[pts["track_id"].isin([a, b])].assign(track_id=a).sort_values("tau").reset_index(drop=True)
+            tau, ra, dec = sub["tau"].to_numpy(), sub["ra"].to_numpy(), sub["dec"].to_numpy()
+            sky = make_track_sky(a, tau, camera.apparent_vectors(ra, dec, tau), ra, dec)
+            res = identify_tracks(observer, catalog, [sky], grid, delta, icfg).get(a) or []
+            limit = max(ratio * min(ma.cross_deg, mb.cross_deg), floor_deg)
+            if res and res[0].norad == norad and res[0].cross_deg <= limit:
+                tracks[a] = {"items": tracks[a]["items"] + tracks[b]["items"], "single": False}
+                del tracks[b]
+                skies[a], matches[a] = sky, res
+                del skies[b], matches[b]
+                pts = pd.concat([pts[~pts["track_id"].isin([a, b])], sub], ignore_index=True) \
+                    .sort_values(["track_id", "tau"]).reset_index(drop=True)
+                tids.pop(i + 1)
+                if log:
+                    log.info("[%s] tory #%d i #%d to jeden obiekt (NORAD %d, przerwa %.0f s): scalone, residuum "
+                             "poprzeczne %.0f″", name, a, b, norad, gap, res[0].cross_deg * 3600)
+                continue
+            got = f"{res[0].cross_deg * 3600:.0f}″" if res and res[0].norad == norad else "bez dopasowania"
+            for m, other in ((ma, b), (mb, a)):
+                m.same_norad_as.append(other)
+                m.reason += f"; ten sam NORAD co #{other}, ale tory nie składają się w jeden (scalony: {got})"
+            if log:
+                log.info("[%s] tory #%d i #%d dopasowane do NORAD %d nie składają się w jeden tor (residua %.0f″ "
+                         "i %.0f″, scalony: %s) — oznaczone", name, a, b, norad, ma.cross_deg * 3600,
+                         mb.cross_deg * 3600, got)
+            i += 1
+    return pts
+
+
+def update_clock_log(path: Path, row: dict) -> None:
+    """Dziennik zegara aparatu: jeden plik obok folderów sesji, wiersz sesji nadpisywany przy
+    ponownym przebiegu, zapis atomowy (plik tymczasowy + ``os.replace``)."""
+    import pandas as pd
+
+    old = pd.read_csv(path) if path.exists() else pd.DataFrame()
+    if len(old) and "session" in old:
+        old = old[old["session"] != row["session"]]
+    df = pd.concat([old, pd.DataFrame([row])], ignore_index=True).sort_values("start_utc_synced")
+    tmp = path.with_name(path.name + ".tmp")
+    df.to_csv(tmp, index=False)
+    os.replace(tmp, path)
+
+
 @PHOTO_PIPELINE.stage("identify", sections=("identify", "classify", "site", "time", "satellites.ephemeris_dir",
                                             "report.identified_min_confidence", "streaks.link"),
-                      requires=("link", "tle"), rev=1, roles=("sky",))
+                      requires=("link", "tle"), rev=2, roles=("sky",))
 def identify(ctx: StageContext) -> dict:
     """Model czasu kresek → synchronizacja zegara po satelitach (łańcuchy) → NORAD."""
     import pandas as pd
@@ -903,7 +999,8 @@ def identify(ctx: StageContext) -> dict:
     from .astrometry import load_wcs
     from .report import CONF_RANK
     from .satellites import (SIDEREAL_DEG_S, Observer, identify_tracks, load_catalog, make_track_sky,
-                             observer_offset, screen, sunlit_at, sunlit_flags, synchronize)
+                             observer_offset, point_residuals, screen, sunlit_at, sunlit_flags,
+                             synchronize, track_light)
     from .sky import FixedCamera, field_center, radec_to_vec
     from .streaks import endpoint_rows
 
@@ -1015,6 +1112,13 @@ def identify(ctx: StageContext) -> dict:
     if flipped:
         pts = pd.concat([pts[~pts["track_id"].isin(flipped)], rev[rev["track_id"].isin(flipped)]],
                         ignore_index=True).sort_values(["track_id", "tau"]).reset_index(drop=True)
+    for tid, tr in tracks.items():      # kierunek lotu ustalony: pojedyncze kreski wg lepszego dopasowania
+        tr["items"] = [(s, o if o else ((-1 if tid in flipped else 1) if matches.get(tid) else 0))
+                       for s, o in tr["items"]]
+    tau_mid0 = {tid: s.tau_mid for tid, s in skies.items()}     # członkowie synchronizacji: numery sprzed scalenia
+    if grid is not None:
+        pts = merge_same_norad(tracks, skies, matches, pts, camera, observer, catalog, grid, delta, icfg, lcfg,
+                               ctx.log, ctx.input_path.name)
     bests = [m[0] for m in matches.values() if m]
     for m in bests:
         s = skies[m.track_id]
@@ -1022,8 +1126,21 @@ def identify(ctx: StageContext) -> dict:
         u = observer.topocentric([catalog.satrecs[m.cat_index]], m.delta_s + s.tau[sel])["unit"][0]
         pra, pdec = camera.astrometric_radec(u, s.tau[sel], m.delta_s)
         m.pred_radec = np.column_stack([pra, pdec]).tolist()
-    tau_mid = {s.track_id: s.tau_mid for s in skies.values()}
+    tau_mid = {**tau_mid0, **{tid: s.tau_mid for tid, s in skies.items()}}
     eph = sunlit_flags(catalog, bests, observer, ctx.cfg["satellites"]["ephemeris_dir"], tau_mid)
+    for m in bests:                     # oświetlenie na początku, w środku i na końcu toru
+        track_light(catalog, m, skies[m.track_id], observer, eph)
+        if m.light == "w cieniu" and m.confidence == "high":
+            m.confidence = "medium"
+            m.reason += "; w cieniu Ziemi przez cały tor"
+        elif m.light in ("wchodzi w cień", "wychodzi z cienia") and m.shadow_tau is not None:
+            m.reason += f"; {m.light} ok. {(t0 + timedelta(seconds=m.delta_s + m.shadow_tau)):%H:%M:%S} UTC"
+    pts = pts.assign(res_cross_arcsec=np.nan, res_along_s=np.nan)
+    for m in bests:                     # residua każdego punktu (strona obiektu w raporcie)
+        sel = (pts["track_id"] == m.track_id).to_numpy()
+        cross, along = point_residuals(observer, catalog, m, skies[m.track_id])
+        if sel.sum() == len(cross):
+            pts.loc[sel, "res_cross_arcsec"], pts.loc[sel, "res_along_s"] = cross, along
     sunlit_flags(catalog, sync.members + ([sync.reference] if sync.reference else []), observer, None, tau_mid,
                  eph=eph)
     min_rank = CONF_RANK[str(ctx.cfg["report"]["identified_min_confidence"])]
@@ -1070,13 +1187,20 @@ def identify(ctx: StageContext) -> dict:
             "norad": best.norad if best else None, "sat_name": best.name if best else None,
             "confidence": best.confidence if best else None, "match_reason": best.reason if best else None,
             "sunlit": best.sunlit if best else None,
+            "light": best.light if best else None,
+            "same_norad_as": ",".join(f"#{o}" for o in best.same_norad_as) if best else "",
         })
     final = pd.DataFrame(rows)
     final.to_parquet(ctx.outdir / "tracks_final.parquet", index=False)
     final.to_csv(ctx.outdir / "tracks_final.csv", index=False)
     pts = pts.assign(frame=pts.groupby("track_id").cumcount())
-    pts[["track_id", "frame", "streak_id", "photo", "m", "end", "x", "y", "tau", "y_sensor", "ra", "dec"]] \
-        .to_parquet(ctx.outdir / "track_sky.parquet", index=False)
+    pts[["track_id", "frame", "streak_id", "photo", "m", "end", "x", "y", "tau", "y_sensor", "ra", "dec",
+         "res_cross_arcsec", "res_along_s"]].to_parquet(ctx.outdir / "track_sky.parquet", index=False)
+    # kreski torów po scaleniu (raport; chains.parquet z etapu link zostaje bez zmian)
+    pd.DataFrame([{"track_id": tid, "pos": pos, "streak_id": int(s), "orient": int(o)}
+                  for tid, tr in sorted(tracks.items()) for pos, (s, o) in enumerate(tr["items"])],
+                 columns=["track_id", "pos", "streak_id", "orient"]).to_parquet(ctx.outdir / "track_streaks.parquet",
+                                                                            index=False)
     ctx.write_json("identifications.json", {str(k): [m.to_dict() | ({"pred_radec": getattr(m, "pred_radec", None)}
                                                                      if i == 0 else {}) for i, m in enumerate(v)]
                                             for k, v in matches.items()})
@@ -1116,18 +1240,29 @@ def identify(ctx: StageContext) -> dict:
     note = (f"{gp['n_objects']} obiektów ({', '.join(sorted({f['source'] for f in gp['files']}))}); mediana wieku "
             f"elementów {f'{age:.2f} d' if age is not None else '–'}"
             + ("" if gp["spacetrack"] else "; bez Space-Track: niepełne człony rakiet i śmieci"))
-    photo_timing = {"cadence": meta["session"]["cadence"], "gap": timing, "gap_used_s": float(timing["g0_s"]) + dg,
-                    "gap_from_geometry": use_g, "rolling_shutter_s": r_s, "satellite_check": check}
+    rh = session_rhythm(ctx.outdir, meta)
+    photo_timing = {"cadence": meta["session"]["cadence"], "rhythm": rh, "gap": timing,
+                    "gap_used_s": float(timing["g0_s"]) + dg, "gap_from_geometry": use_g, "rolling_shutter_s": r_s,
+                    "satellite_check": check}
     ctx.write_json("time_sync.json", {**sync.to_dict(), "start_utc_prior": t0.isoformat(),
                                       "start_utc_synced": (t0 + timedelta(seconds=delta)).isoformat(),
                                       "catalog_note": note, "observer_offset": offset, "photo_timing": photo_timing,
                                       "site": dict(zip(("lat_deg", "lon_deg", "elevation_m"), site))})
     n_sat = int((final["kind"] == "sat").sum()) if len(final) else 0
+    if sync.synced:                     # dziennik zegara aparatu (wszystkie sesje, obok folderów sesji)
+        try:
+            update_clock_log(ctx.out_root / "clock_log.csv", {
+                "session": ctx.input_path.name, "start_utc_exif": t0.isoformat(),
+                "start_utc_synced": (t0 + timedelta(seconds=delta)).isoformat(), "delta_s": round(delta, 4),
+                "sigma_s": round(float(sync.sigma_s), 4), "confidence": sync.confidence, "satellites": n_sat,
+                "rhythm": rh.get("mode"), "slips": rh.get("n_slips", 0), "model": meta["session"].get("model")})
+        except Exception as e:  # noqa: BLE001 — dziennik nie może zatrzymać etapu
+            ctx.log.warning("[%s] dziennik zegara: %s", ctx.input_path.name, e)
     ctx.log.info("[%s] zidentyfikowane satelity: %d / %d obiektów (łańcuchy %d, pojedyncze kreski %d); "
                  "przewidziane w kadrze: %d", ctx.input_path.name, n_sat, len(final), len(chain_skies),
                  len(single_skies), len(pred_rows))
-    return {"outputs": ["tracks_final.parquet", "tracks_final.csv", "track_sky.parquet", "identifications.json",
-                        "fov_predicted.csv", "time_sync.json"],
+    return {"outputs": ["tracks_final.parquet", "tracks_final.csv", "track_sky.parquet", "track_streaks.parquet",
+                        "identifications.json", "fov_predicted.csv", "time_sync.json"],
             "metrics": {"delta_s": delta, "sigma_s": sync.sigma_s, "sync_confidence": sync.confidence,
                         "synced": sync.synced, "tracks": len(final), "satellites": n_sat,
                         "predicted_in_fov": len(pred_rows), "gap_s": photo_timing["gap_used_s"],
@@ -1190,7 +1325,7 @@ def adsb(ctx: StageContext) -> dict:
 
 
 @PHOTO_PIPELINE.stage("report", sections=("report", "iod", "classify.periodic_min_power"),
-                      requires=("process", "adsb"), rev=3, roles=("sky",))
+                      requires=("process", "adsb"), rev=4, roles=("sky",))
 def report(ctx: StageContext) -> dict:
     """Mapa na głębokim stosie z torami, przebieg sesji, czas z satelitów, obiekty, IOD."""
     import pandas as pd

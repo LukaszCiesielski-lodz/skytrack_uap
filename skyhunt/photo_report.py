@@ -63,6 +63,8 @@ def build(outdir: Path, folder: Path, cfg: dict) -> list[str]:
     from matplotlib.backends.backend_pdf import PdfPages
 
     from .astrometry import load_wcs
+    from .photo_stages import session_rhythm
+    from .photo_timing import rhythm_text
 
     Figure = _mpl()
     rep = outdir / "report"
@@ -82,6 +84,9 @@ def build(outdir: Path, folder: Path, cfg: dict) -> list[str]:
     start = datetime.fromisoformat(prior["start_utc"])
     cad = sess["cadence"]
     fov = wcsinfo.get("fov") or {}
+    rh = session_rhythm(outdir, meta)
+    chain_rms = ((read_json(outdir / "link.json").get("timing") or {}).get("rms_ms")
+                 if (outdir / "link.json").exists() else None)
 
     path = rep / "summary.pdf"
     with PdfPages(path) as pdf:
@@ -129,9 +134,10 @@ def build(outdir: Path, folder: Path, cfg: dict) -> list[str]:
             f"ISO {sess['iso']}, f/{sess['fnumber']}",
             f"Start (EXIF + rytm, czas a priori): {fmt_utc(start)}   koniec ≈ "
             f"{fmt_utc(start + timedelta(seconds=float(sess['duration_s'])))}",
-            f"Rytm serii: P = {cad['period']:.4f} s, start serii 0 ±{cad['t0_halfwidth']:.3f} s "
-            f"({'regularny' if cad['regular'] else 'NIEREGULARNY'}; EXIF {'z' if sess['exif_subsec'] else 'bez'} "
-            f"ułamków sekundy)",
+            f"Rytm serii: P = {cad['period']:.4f} s, "
+            + (f"start serii 0 ±{cad['t0_halfwidth']:.3f} s " if rh.get("mode") != "integer_clock" else "")
+            + f"(EXIF {'z' if sess['exif_subsec'] else 'bez'} ułamków sekundy)",
+            f"  {rhythm_text(rh, chain_rms)}",
             *(time_lines(read_json(outdir / "time_sync.json"))[:2] if (outdir / "time_sync.json").exists()
               else ["Właściwy czas (poprawka zegara Δ z satelitów): brak etapu identify"]),
             "",
@@ -140,7 +146,8 @@ def build(outdir: Path, folder: Path, cfg: dict) -> list[str]:
             f"Pole: {fov.get('fov_w_deg', float('nan')):.2f}° × {fov.get('fov_h_deg', float('nan')):.2f}°, "
             f"skala {fov.get('scale_arcsec_px', float('nan')):.1f}″/px (superpiksel 3×3)",
             "Stosy: " + ", ".join(f"{c}: {v['frames']} zdj." for c, v in classes.items()),
-        ] + [f"UWAGA: {w}" for w in sess.get("warnings", [])]
+        ] + [f"UWAGA: {w}" for w in sess.get("warnings", [])
+             if not (w.startswith("nieregularny rytm") and rh.get("mode") != "irregular")]
         fig.text(0.02, 0.92, "\n".join(lines), family="monospace", fontsize=8, va="top")
         panels = [("bg_median", "tło (mediana) [DN·9]"), ("noise_mad", "szum σ [DN·9]"),
                   ("drift", "ruch aparatu z plate solve (statyw) [px]"),
@@ -201,15 +208,21 @@ def objects(outdir: Path, wcs) -> list[dict]:
     if not len(final):
         return []
     st = pd.read_parquet(outdir / "streaks.parquet").set_index("streak_id")
-    chn = pd.read_parquet(outdir / "chains.parquet")
+    ts_f = outdir / "track_streaks.parquet"         # tory po scaleniu w identify (starsze wyniki: łańcuchy z link)
+    chn = (pd.read_parquet(ts_f) if ts_f.exists()
+           else pd.read_parquet(outdir / "chains.parquet").assign(track_id=lambda d: d["chain_id"] + 1))
     ids = read_json(outdir / "identifications.json") if (outdir / "identifications.json").exists() else {}
     air_f = outdir / "adsb_matches.csv"
     air = pd.read_csv(air_f) if air_f.exists() else pd.DataFrame(columns=["track_id"])
+    sky_f = outdir / "track_sky.parquet"
+    tsky = pd.read_parquet(sky_f) if sky_f.exists() else None
+    if tsky is not None and "res_cross_arcsec" not in tsky:
+        tsky = None
     air_by = {int(r["track_id"]): r for _, r in air.iterrows()}
     out = []
     for _, t in final.sort_values("tau0").iterrows():
         tid = int(t["track_id"])
-        sids = chn.loc[chn["chain_id"] == tid - 1].sort_values("pos")["streak_id"].astype(int).tolist()
+        sids = chn.loc[chn["track_id"] == tid].sort_values("pos")["streak_id"].astype(int).tolist()
         segs = st.loc[sids].reset_index()
         a = air_by.get(tid)
         kind = "air" if (a is not None and t["kind"] != "sat") else str(t["kind"])
@@ -227,6 +240,7 @@ def objects(outdir: Path, wcs) -> list[dict]:
         else:
             label = f"#{tid} {t['class_hint']}"
         out.append({"track_id": tid, "row": t, "segs": segs, "kind": kind, "pred": pred, "label": label, "air": a,
+                    "res": tsky[tsky["track_id"] == tid] if tsky is not None else None,
                     "color": {"sat": C_SAT, "air": C_AIR}.get(kind, C_UNID),
                     "major": kind in ("sat", "air") or int(t["n_streaks"]) >= MAJOR_MIN_STREAKS
                     or str(t["class_hint"]) == "meteor?"})
@@ -277,7 +291,11 @@ def time_lines(sync: dict) -> list[str]:
         lines.append(f"Satelita odniesienia: NORAD {ref['norad']} {ref['name']} (δ = {ref['delta_s']:+.3f} s, "
                      f"residuum {ref['rms_deg'] * 3600:.0f}″)")
     if cad:
-        lines.append(f"Rytm serii z EXIF: P = {_f(cad.get('period'), '.4f', ' s')} (faza w obrębie sekundy → Δ)")
+        from .photo_timing import rhythm_text
+
+        rh = pt.get("rhythm")
+        lines.append(f"Rytm serii z EXIF: P = {_f(cad.get('period'), '.4f', ' s')} — "
+                     + (rhythm_text(rh, gap.get("rms_ms")) if rh else "faza w obrębie sekundy → Δ"))
     if gap.get("fitted"):
         lines.append(f"Przerwa między zdjęciami serii (geometria {gap['n_chains']} łańcuchów): g = {gap['g_s']:.3f} ± "
                      f"{gap['sigma_s']:.3f} s; residua końców {_f(gap.get('rms_px'), '.2f', ' px')} = "
@@ -301,10 +319,30 @@ def time_lines(sync: dict) -> list[str]:
     return lines
 
 
-def _sunlit_text(v) -> str:
+def _sunlit_text(v, light=None) -> str:
+    """Oświetlenie toru: stan z początku, środka i końca (identify rev 2), inaczej flaga ze środka."""
+    if isinstance(light, str) and light:
+        return {"w cieniu": "w cieniu Ziemi"}.get(light, light)
     if v is None or (isinstance(v, float) and not np.isfinite(v)):
         return "oświetlenie ?"
     return "oświetlony" if bool(v) else "w cieniu Ziemi"
+
+
+def residual_plot(ax, res) -> None:
+    """Residuum poprzeczne końców kresek względem predykcji z elementów orbit — kreska, która
+    odstaje od reszty toru, to inny obiekt albo błąd pomiaru (kolor zmienia się co kreskę)."""
+    r = res.sort_values("tau")
+    t = r["tau"].to_numpy(float) - float(r["tau"].iloc[0])
+    cross = r["res_cross_arcsec"].to_numpy(float)
+    sids = r["streak_id"].to_numpy()
+    colors = np.where(np.cumsum(np.r_[0, sids[1:] != sids[:-1]]) % 2 == 0, "#1f77b4", "#ff7f0e")
+    ax.scatter(t, cross, c=colors, s=8)
+    ax.axhline(0, color="k", lw=0.5)
+    along = r["res_along_s"].to_numpy(float)
+    med = float(np.nanmedian(along)) if np.isfinite(along).any() else float("nan")
+    ax.set_title(f"residuum poprzeczne końców kresek [″] (mediana wzdłuż toru {_f(med, '+.2f', ' s')})", fontsize=7)
+    ax.set_xlabel("czas od początku toru [s]", fontsize=7)
+    ax.tick_params(labelsize=6)
 
 
 def _minor_page(pdf, Figure, minor: list[dict], flat: np.ndarray) -> None:
@@ -401,14 +439,19 @@ def satellite_pages(pdf, Figure, outdir: Path, objs: list[dict], flat: np.ndarra
                 f"S/N kresek (mediana) {_f(t['peak_snr_median'], '.0f')}   {t['class_reason']}"]
         if o["kind"] == "sat":
             info.append(f"NORAD {int(t['norad'])} {t['sat_name']}: {t['match_reason']} (pewność {t['confidence']}, "
-                        f"{_sunlit_text(t['sunlit'])})")
+                        f"{_sunlit_text(t['sunlit'], t.get('light'))})")
         if bool(t.get("dir_ambiguous", False)):
             info.append("Kierunek lotu nieznany (jedna kreska) — czasy końców mogą być zamienione")
         fig.text(0.02, 0.93, "\n".join(info), fontsize=7.5, va="top")
         segs = o["segs"]
         xy = np.vstack([segs[["xa", "ya"]].to_numpy(), segs[["xb", "yb"]].to_numpy()])
-        ax = fig.add_axes([0.02, 0.05, 0.5, 0.72])
-        x0, x1, y0, y1 = _region(xy, flat.shape, 40, 0.5 / 0.72 * A4[0] / A4[1])
+        res = o.get("res")
+        show_res = o["kind"] == "sat" and res is not None and np.isfinite(res["res_cross_arcsec"]).sum() >= 2
+        box = [0.02, 0.27, 0.5, 0.5] if show_res else [0.02, 0.05, 0.5, 0.72]
+        ax = fig.add_axes(box)
+        x0, x1, y0, y1 = _region(xy, flat.shape, 40, box[2] / box[3] * A4[0] / A4[1])
+        if show_res:
+            residual_plot(fig.add_axes([0.08, 0.05, 0.42, 0.15]), res)
         ax.imshow(st_full[y0:y1, x0:x1], cmap="gray", vmin=0, vmax=1, interpolation="nearest",
                   extent=(x0 - 0.5, x1 - 0.5, y1 - 0.5, y0 - 0.5))
         draw_objects(ax, [o], labels=False, lw=1.0)

@@ -106,10 +106,54 @@ def fit_cadence(t_floor: np.ndarray, *, search_s: float = 0.25, step_s: float = 
     return Cadence(t0, p_hat, 0.5, float("nan"), False, n, viol)
 
 
+def rhythm(t_floor: np.ndarray, cad: Cadence | None = None, max_other_frac: float = 0.01) -> dict:
+    """Rodzaj rytmu serii z pełnych sekund EXIF pierwszych zdjęć serii.
+
+    ``vernier`` — jeden rytm T0 + P·k wyjaśnia wszystkie serie (noniusz, ``fit_cadence``).
+    ``integer_clock`` — odstępy to prawie zawsze ten sam pełny krok, czasem o 1 s dłuższy: aparat
+    zaczyna serię na pełnej sekundzie swojego zegara, a gdy nie nadąży (zapis na kartę), czeka
+    sekundę dłużej. Czas „EXIF + 0,5 s” ma wtedy stałą fazę, którą wchłania poprawka zegara Δ,
+    więc nie jest to błąd ±0,5 s. Potwierdzają to małe residua czasu w łańcuchach kresek.
+    ``irregular`` — odstępy bez wzoru: czas startu serii z EXIF ±0,5 s."""
+    t = np.asarray(t_floor, float)
+    out = {"mode": "irregular", "step_s": float("nan"), "n_slips": 0, "slip_sets": [], "n_other": 0}
+    if len(t) < 3:
+        return out
+    cad = cad if cad is not None else fit_cadence(t)
+    if cad.regular:
+        return {**out, "mode": "vernier", "step_s": float(cad.period)}
+    d = np.rint(np.diff(t)).astype(int)
+    vals, counts = np.unique(d, return_counts=True)
+    step = int(vals[np.argmax(counts)])
+    slips = np.flatnonzero(d == step + 1) + 1               # seria, przed którą był przeskok
+    other = int(np.sum((d != step) & (d != step + 1)))
+    mode = "integer_clock" if step >= 1 and other <= max(1, max_other_frac * len(d)) else "irregular"
+    return {"mode": mode, "step_s": float(step), "n_slips": int(len(slips)), "slip_sets": slips.tolist(),
+            "n_other": other}
+
+
+def rhythm_text(rh: dict, chain_rms_ms: float | None = None) -> str:
+    """Opis rytmu do raportu i logu."""
+    mode = rh.get("mode")
+    if mode == "exif_subsec":
+        return "czas zdjęć wprost z EXIF (z ułamkami sekundy)"
+    if mode == "vernier":
+        return "regularny (noniusz z pełnych sekund EXIF)"
+    if mode == "integer_clock":
+        ok = chain_rms_ms is not None and math.isfinite(chain_rms_ms) and chain_rms_ms <= 50
+        return (f"start serii na pełnej sekundzie zegara aparatu: krok {rh['step_s']:.0f} s, "
+                f"{rh['n_slips']} przeskoków o +1 s"
+                + (f" (potwierdzone łańcuchami kresek: residua {chain_rms_ms:.0f} ms)" if ok
+                   else " (do potwierdzenia łańcuchami kresek)")
+                + "; stała faza sekundy wchodzi w Δ")
+    return "NIEREGULARNY — start serii z EXIF ±0,5 s"
+
+
 def open_times(set_idx: list[int], exposures: list[float], t_floor: np.ndarray, cad: Cadence,
                gap_s: float) -> np.ndarray:
     """Chwile otwarcia migawki [s, skala EXIF] dla każdego zdjęcia. Start serii z rytmu (gdy
-    regularny) albo z EXIF + 0,5 s (środek sekundy); w serii kolejno T_exp + g."""
+    regularny) albo z EXIF + 0,5 s (środek sekundy; przy rytmie ``integer_clock`` to stała faza,
+    którą wchłania Δ); w serii kolejno T_exp + g."""
     set_idx = np.asarray(set_idx, int)
     out = np.empty(len(set_idx))
     regular = cad.regular and math.isfinite(cad.period)

@@ -187,3 +187,39 @@ def test_flatten_removes_vignetting_keeps_stars():
     f = flatten(vign + star, box=24)
     assert abs(float(np.median(f))) < 20 and float(np.percentile(np.abs(f), 90)) < 40
     assert f[40, 300] > 250                                    # gwiazda w rogu zostaje
+
+
+def test_clock_log_replaces_session_row(tmp_path):
+    import pandas as pd
+
+    from skyhunt.photo_stages import update_clock_log
+
+    p = tmp_path / "clock_log.csv"
+    update_clock_log(p, {"session": "s3", "start_utc_synced": "2026-10-03T19:11:09", "delta_s": -5.03})
+    update_clock_log(p, {"session": "s1", "start_utc_synced": "2026-10-02T19:00:00", "delta_s": -3.10})
+    update_clock_log(p, {"session": "s1", "start_utc_synced": "2026-10-02T19:00:00", "delta_s": -3.15})
+    df = pd.read_csv(p)
+    assert list(df["session"]) == ["s1", "s3"] and df["delta_s"].tolist() == [-3.15, -5.03]
+    assert not (tmp_path / "clock_log.csv.tmp").exists()
+
+
+def test_session_rhythm_from_photos_csv(tmp_path):
+    """Sesje policzone przed zapisem rytmu w meta.json: rytm z photos.csv, bez przeliczania probe."""
+    import pandas as pd
+
+    from skyhunt.io import write_json
+    from skyhunt.photo_stages import session_rhythm
+
+    d = [4] * 30
+    d[10] = d[11] = 5                    # dwa przeskoki tuż po sobie (równomierne to noniusz)
+    secs = np.r_[0, np.cumsum(d)]
+    rows = []
+    for k, s in enumerate(secs):
+        for j in range(3):
+            t = 19 * 3600 + 11 * 60 + int(s) + j
+            rows.append({"datetime": f"2026:10:03 {t // 3600:02d}:{t // 60 % 60:02d}:{t % 60:02d}", "set": k})
+    pd.DataFrame(rows).to_csv(tmp_path / "photos.csv", index=False)
+    write_json(tmp_path / "meta.json", {"session": {"exif_subsec": False}})
+    rh = session_rhythm(tmp_path)
+    assert rh["mode"] == "integer_clock" and rh["slip_sets"] == [11, 12]
+    assert session_rhythm(tmp_path, {"session": {"rhythm": {"mode": "vernier"}}})["mode"] == "vernier"

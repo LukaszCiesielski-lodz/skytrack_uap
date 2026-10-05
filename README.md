@@ -88,11 +88,16 @@ Zamiast wideo można przetwarzać serie zdjęć RAW (Fujifilm RAF) z bracketingi
   - `streaks`: kreski na różnicy zdjęcia z sąsiednimi zdjęciami tej samej klasy jasności. S/N jest liczone z pasów kontrolnych obok kreski, bo szum po wyrównaniu jest skorelowany. Końce kresek wynikają z dopasowania profilu.
   - `link`: łańcuchy kresek jednego obiektu przez kolejne zdjęcia, także przez brakującą serię. Przerwa między zdjęciami serii jest mierzona z samej geometrii.
   - `identify`: poprawka zegara Δ z satelitów i numery NORAD. Kontrola modelu czasu na zidentyfikowanych satelitach.
+    - Tory jednego satelity, które `link` zostawił osobno, są scalane. Gdy nie składają się w jeden tor, raport oznacza je „ten sam NORAD co #…”.
+    - Oświetlenie jest sprawdzane na początku, w środku i na końcu toru: „oświetlony”, „w cieniu”, „wchodzi w cień ok. hh:mm:ss UTC”. Satelita w cieniu przez cały tor nie dostaje pewności `high`.
+    - Strona obiektu pokazuje residuum poprzeczne każdej kreski względem predykcji.
+    - `out/clock_log.csv`: dziennik zegara aparatu ze wszystkich sesji (Δ, liczba satelitów, rodzaj rytmu). Ostatnia komórka `run_photos.ipynb` liczy z niego dryf zegara w s/dobę.
   - Samoloty z ADS-B.
   - Raport: tory na mapie, strona czasu, tabela obiektów i strona każdego obiektu z wycinkami kolejnych zdjęć. Krótkie obiekty są na osobnej stronie diagnostycznej.
   - Pozycje IOD z czasem końców kresek.
 - **W kolejnych etapach:** jasność i błyski wzdłuż kreski, kolor (F3), planetoidy na stosie (F4).
 - **Ustawienia aparatu (X-E3):** M, f/1.0, ISO 800, migawka elektroniczna, tylko RAW (kompresja bezstratna), DR100, WB 5600 K, AE BKT ±1 EV (1/2 s, 1 s, 1/4 s), redukcja szumów długich czasów wyłączona, interwałometr.
+- **Rytm serii.** W s3 aparat zachowywał się tak, jakby zaczynał serię na pełnej sekundzie swojego zegara, a gdy nie nadążył z zapisem, czekał sekundę dłużej (P = 4,012 s; s1 i s2 miały rytm regularny). Raport nazywa to „start serii na pełnej sekundzie zegara aparatu” i nie ostrzega o ±0,5 s, bo stałą fazę sekundy wchłania Δ. Potwierdzają to residua czasu w łańcuchach kresek (11 ms).
 - **Jedna sesja = jedno pole nieba.** Kilka zdjęć innego kadru w folderze psuje astrometrię całej sesji: zgodność epok (`epoch_rms_px` w `skyhunt status`) skacze do tysięcy pikseli, a kresek jest zero. Po dodaniu albo usunięciu plików pipeline sam liczy sesję od nowa.
 - Diagnostyka plików przed pierwszą sesją: [colab/raw_diagnostics.ipynb](colab/raw_diagnostics.ipynb).
 - **Notebooki:**

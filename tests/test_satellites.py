@@ -194,3 +194,91 @@ def test_omm_keeps_large_norad(tmp_path):
     assert 100500 in set(catalog.norad.tolist())
     assert 25544 in set(catalog.norad.tolist())
     assert catalog.name[list(catalog.norad).index(25544)] == "ISS (ZARYA)"
+
+
+class _VecCamera:
+    """Kamera testowa: RA/Dec w tabeli punktów to wprost współrzędne kątowe wektorów kierunku."""
+
+    @staticmethod
+    def apparent_vectors(ra, dec, tau):
+        ra, dec = np.radians(ra), np.radians(dec)
+        return np.column_stack([np.cos(dec) * np.cos(ra), np.cos(dec) * np.sin(ra), np.sin(dec)])
+
+
+def _split_pass(tmp_path, high_pass, cfg, offset_arcsec=0.0):
+    """Przelot ISS jako dwa tory (0–3 s i 4–7 s, przerwa jak brakująca seria zdjęć); drugi tor
+    opcjonalnie przesunięty w poprzek o ``offset_arcsec`` (inny obiekt obok toru)."""
+    import pandas as pd
+
+    icfg = cfg["identify"]
+    catalog, observer, _ = build(tmp_path, high_pass, prior_error_s=0.0)
+    obs_true = Observer(*SITE, high_pass - timedelta(seconds=3))
+    i_iss = int(np.flatnonzero(catalog.norad == 25544)[0])
+    rows, skies = [], {}
+    for tid, (t_a, dur) in ((1, (0.0, 3.0)), (2, (4.0, 3.0))):
+        tau, u = synthetic_track(obs_true, catalog.satrecs[i_iss], t_a, dur, tid, seed=tid)
+        if tid == 2 and offset_arcsec:
+            pole = make_track_sky(tid, tau, u, tau, tau).gc.pole
+            u = u + pole * np.radians(offset_arcsec / 3600)
+            u /= np.linalg.norm(u, axis=1, keepdims=True)
+        ra, dec = np.degrees(np.arctan2(u[:, 1], u[:, 0])), np.degrees(np.arcsin(u[:, 2]))
+        skies[tid] = make_track_sky(tid, tau, u, ra, dec)
+        rows += [{"track_id": tid, "tau": t, "ra": r, "dec": d} for t, r, d in zip(tau, ra, dec)]
+    grid = grid_factory(observer, catalog, icfg, list(skies.values()))(5.0)
+    matches = identify_tracks(observer, catalog, list(skies.values()), grid, 0.0, icfg)
+    tracks = {1: {"items": [(10, 1), (11, 1)], "single": False}, 2: {"items": [(12, 1), (13, 1)], "single": False}}
+    return tracks, skies, matches, pd.DataFrame(rows), observer, catalog, grid, icfg
+
+
+def test_merge_same_norad_joins_split_pass(tmp_path, high_pass, cfg):
+    from skyhunt.photo_stages import merge_same_norad
+
+    tracks, skies, matches, pts, observer, catalog, grid, icfg = _split_pass(tmp_path, high_pass, cfg)
+    assert matches[1][0].norad == matches[2][0].norad == 25544
+    pts = merge_same_norad(tracks, skies, matches, pts, _VecCamera(), observer, catalog, grid, 0.0, icfg,
+                           cfg["streaks"]["link"])
+    assert list(tracks) == [1] and tracks[1]["items"] == [(10, 1), (11, 1), (12, 1), (13, 1)]
+    assert list(matches) == [1] and matches[1][0].norad == 25544
+    assert set(pts["track_id"]) == {1} and skies[1].dur_s == pytest.approx(7.0, abs=0.1)
+
+
+def test_merge_same_norad_flags_offset_track(tmp_path, high_pass, cfg):
+    from skyhunt.photo_stages import merge_same_norad
+
+    tracks, skies, matches, pts, observer, catalog, grid, icfg = _split_pass(tmp_path, high_pass, cfg, 250.0)
+    assert matches[2][0].norad == 25544 and matches[2][0].confidence == "medium"
+    merge_same_norad(tracks, skies, matches, pts, _VecCamera(), observer, catalog, grid, 0.0, icfg,
+                     cfg["streaks"]["link"])
+    assert set(tracks) == {1, 2}
+    assert matches[1][0].same_norad_as == [2] and matches[2][0].same_norad_as == [1]
+    assert "ten sam NORAD co #2" in matches[1][0].reason
+
+
+def test_point_residuals_show_offset(tmp_path, high_pass, cfg):
+    from skyhunt.satellites import point_residuals
+
+    _, skies, matches, _, observer, catalog, _, _ = _split_pass(tmp_path, high_pass, cfg, 250.0)
+    cross1, along1 = point_residuals(observer, catalog, matches[1][0], skies[1])
+    cross2, _ = point_residuals(observer, catalog, matches[2][0], skies[2])
+    assert np.nanmedian(np.abs(cross1)) < 30 and np.nanmedian(np.abs(along1)) < 0.05
+    assert np.nanmedian(np.abs(cross2)) == pytest.approx(250, abs=40)
+
+
+def test_light_state_and_shadow_crossing(monkeypatch):
+    import skyhunt.satellites as S
+
+    assert S.light_state([True, True, True]) == "oświetlony"
+    assert S.light_state([False, False, False]) == "w cieniu"
+    assert S.light_state([True, True, False]) == "wchodzi w cień"
+    assert S.light_state([False, True, True]) == "wychodzi z cienia"
+    assert S.light_state([True, False, True]) == "na granicy cienia"
+    assert S.light_state([True, None, True]) is None
+
+    edge = 1004.3          # granica cienia w chwili δ + τ
+    monkeypatch.setattr(S, "sunlit_at", lambda cat, idx, offs, obs, eph: [o < edge for o in offs])
+    m = S.Match(1, 0, 1, "x", "", "", "test", 1000.0, 0.01, 0.01, 1.0, 1.0, 0.0, 500.0, 450.0, 0.8)
+    tau = np.linspace(0.0, 10.0, 11)
+    track = make_track_sky(1, tau, np.tile([1.0, 0.0, 0.0], (11, 1)) + np.c_[np.zeros(11), tau * 1e-3, np.zeros(11)],
+                           tau, tau)
+    S.track_light(None, m, track, None, object())
+    assert m.light == "wchodzi w cień" and m.shadow_tau == pytest.approx(4.3, abs=0.02)

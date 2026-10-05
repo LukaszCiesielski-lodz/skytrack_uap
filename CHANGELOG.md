@@ -1,5 +1,17 @@
 # CHANGELOG
 
+## Poprawki po sesji s3: rytm, ten sam NORAD, cień Ziemi, dziennik zegara — 2026-10-05
+
+- **Rytm serii:** nowy tryb `integer_clock` (`photo_timing.rhythm`). Odstępy między seriami są w pełnych sekundach i czasem dłuższe o 1 s. Raport opisuje to zamiast „NIEREGULARNY ±0,5 s”, bo stałą fazę sekundy wchłania Δ. Starsze sesje dostają rytm z `photos.csv`, bez przeliczania `probe`.
+- **`identify` rev 2:**
+  - tory dopasowane do tego samego NORAD, rozłączne w czasie (przerwa ≤ 60 s), są scalane, gdy razem nadal pasują do obiektu; inaczej są oznaczane („ten sam NORAD co #…”);
+  - oświetlenie liczone na początku, w środku i na końcu toru, z chwilą wejścia w cień lub wyjścia z niego; tor w cieniu przez cały czas traci pewność `high`;
+  - residua każdego punktu toru zapisywane w `track_sky.parquet`;
+  - `track_streaks.parquet`: kreski torów po scaleniu.
+- **Dziennik zegara aparatu:** `out/clock_log.csv` (Δ, σ, satelity, rytm) dla wszystkich sesji. Ostatnia komórka `run_photos.ipynb` pokazuje dryf zegara w s/dobę i poprawkę odczytu migawki.
+- **Raport rev 4:** opis rytmu, oświetlenie wzdłuż toru i wykres residuów kresek na stronie obiektu.
+- Config `streaks.link`: `same_norad_max_gap_s`, `same_norad_merge_ratio`, `same_norad_floor_arcsec`.
+
 ## Odczyt migawki elektronicznej — 2026-10-05
 
 - `streaks.link.rolling_shutter_s: 0.05` (było 0): wartość zmierzona na satelitach w s2 (0,051 s) i s3 (0,047 ± 0,007 s). Przelicza tylko `link`, `identify` i `report`.
