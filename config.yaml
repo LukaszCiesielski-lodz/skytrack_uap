@@ -408,7 +408,8 @@ streaks:
     endpoint_err_floor_px: 0.15
     max_gap_fit_s: 0.5
     gap_max_sigma_s: 0.01    # zmierzone g używane do czasu, gdy σ ≤ tyle
-    rolling_shutter_s: 0.0   # czas odczytu migawki elektronicznej (góra → dół kadru); kontrola z satelitów w identify
+    rolling_shutter_s: 0.05  # czas odczytu migawki elektronicznej (góra → dół kadru); zmierzony na satelitach:
+                             # s2 0,051 s, s3 0,047 ± 0,007 s; kontrola w identify (strona czasu w raporcie)
 
 # Zdjęcie astronomiczne z sesji RAW: `skyhunt astrophoto raw/<sesja>` (pełna rozdzielczość,
 # bez ruchomych obiektów, bez łuny) → out/<sesja>/astro/

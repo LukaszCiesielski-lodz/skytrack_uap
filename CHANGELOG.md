@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## Odczyt migawki elektronicznej — 2026-10-05
+
+- `streaks.link.rolling_shutter_s: 0.05` (było 0): wartość zmierzona na satelitach w s2 (0,051 s) i s3 (0,047 ± 0,007 s). Przelicza tylko `link`, `identify` i `report`.
+
 ## Dokumentacja F2 i zdjęcia astronomicznego — 2026-10-05
 
 - README (PL i EN):

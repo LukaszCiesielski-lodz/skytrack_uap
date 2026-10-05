@@ -111,6 +111,7 @@ First F2 results. Sessions s1 and s2 come from one night, with ~900 photos each.
 - s1 and s2 give the same Δ to within 0.07 s. That is what it should be, since it is the same camera clock.
 - In s3 the camera clock was ~2 s further ahead than in s1 and s2. This comparison is only good to ±0.5 s, because the set cadence in s3 was irregular.
 - In s3 the tracks of identified satellites typically lie 20–40″ from the prediction. Satellite parallax agrees with the entered observing site to ~10 m.
+- The electronic shutter readout measured on satellites (s2: 0.051 s, s3: 0.047 s) is set in the config: `streaks.link.rolling_shutter_s: 0.05`.
 - The objects identified in s3 include rocket bodies from 50 years ago, e.g. DIAMANT B-P4 R/B (NORAD 7647).
 
 Lesson from s2: the first version of the detector found ~1700 "streaks" made of pure noise. After alignment the noise is correlated between neighbouring pixels, and the old formula inflated S/N by 2–3× as a result. That is why S/N is now computed from control bands next to the streak. A streak must also exceed 2σ in each third of its length, and its ends must be blurred like stars.

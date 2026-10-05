@@ -111,6 +111,7 @@ Pierwsze wyniki F2. Sesje s1 i s2 pochodzą z jednej nocy i mają po ~900 zdję�
 - s1 i s2 dają to samo Δ z dokładnością do 0,07 s. Tak powinno być, bo to ten sam zegar aparatu.
 - W s3 zegar aparatu był o ~2 s dalej do przodu niż w s1 i s2. Dokładność tego porównania to ±0,5 s, bo w s3 rytm serii był nieregularny.
 - W s3 tory zidentyfikowanych satelitów leżą zwykle 20–40″ od predykcji. Paralaksa satelitów zgadza się z wpisanym miejscem obserwacji z dokładnością do ~10 m.
+- Odczyt migawki elektronicznej zmierzony na satelitach (s2: 0,051 s, s3: 0,047 s) jest wpisany w config: `streaks.link.rolling_shutter_s: 0.05`.
 - Wśród zidentyfikowanych obiektów s3 są człony rakiet sprzed 50 lat, np. DIAMANT B-P4 R/B (NORAD 7647).
 
 Lekcja z s2: pierwsza wersja detektora znalazła ~1700 „kresek” z samego szumu. Szum po wyrównaniu zdjęć jest skorelowany między sąsiednimi pikselami, a stary wzór zawyżał przez to S/N 2–3×. Dlatego S/N liczy się teraz z pasów kontrolnych obok kreski. Kreska musi też przekraczać 2σ w każdej tercji długości, a jej końce muszą być rozmyte jak gwiazdy.
